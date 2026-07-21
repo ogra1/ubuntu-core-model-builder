@@ -116,8 +116,9 @@ class _HomePageState extends State<HomePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: const YaruWindowTitleBar(
-        title: Text('Ubuntu Core Model Builder'),
+      appBar: AppBar(
+        title: const Text('Ubuntu Core Model Builder'),
+		centerTitle: false,
       ),
       body: Column(
         children: [
