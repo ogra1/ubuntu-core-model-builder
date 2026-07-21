@@ -2,15 +2,20 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../models/store_snap.dart';
 import '../models/snap_entry.dart';
-import '../services/snapd_service.dart';
+import '../services/store_api_service.dart';
 
 class SnapSearchField extends StatefulWidget {
   final void Function(SnapEntry) onSnapSelected;
   final String? modelBase;
 
+  /// The model's target architecture (e.g. "arm64"). Required so we search
+  /// the store for the correct architecture rather than the host's.
+  final String architecture;
+
   const SnapSearchField({
     super.key,
     required this.onSnapSelected,
+    required this.architecture,
     this.modelBase,
   });
 
@@ -19,7 +24,7 @@ class SnapSearchField extends StatefulWidget {
 }
 
 class _SnapSearchFieldState extends State<SnapSearchField> {
-  final _snapd = SnapdService();
+  final _store = StoreApiService();
   final _searchController = TextEditingController();
 
   Timer? _debounce;
@@ -38,6 +43,23 @@ class _SnapSearchFieldState extends State<SnapSearchField> {
     _debounce?.cancel();
     _searchController.dispose();
     super.dispose();
+  }
+
+  static SnapType _mapStoreType(String? storeType) {
+    switch (storeType) {
+      case 'kernel':
+        return SnapType.kernel;
+      case 'gadget':
+        return SnapType.gadget;
+      case 'base':
+        return SnapType.base;
+      case 'snapd':
+        return SnapType.snapd;
+      case 'os':
+        return SnapType.base;
+      default:
+        return SnapType.app;
+    }
   }
 
   String? get _baseTrack {
@@ -74,7 +96,7 @@ class _SnapSearchFieldState extends State<SnapSearchField> {
     }
     setState(() => _searching = true);
     try {
-      final results = await _snapd.findSnaps(query);
+      final results = await _store.findSnaps(query, widget.architecture);
       if (!mounted) return;
       setState(() => _results = results.take(30).toList());
     } catch (_) {
@@ -88,25 +110,27 @@ class _SnapSearchFieldState extends State<SnapSearchField> {
     final detectedType = _mapStoreType(snap.type);
     setState(() {
       _selected = snap;
-      _type = detectedType; // auto-select kernel/gadget/base/snapd/app
+      _type = detectedType;
       _loadingChannels = true;
       _availableChannels = [];
       _channel = null;
-      _results = []; // collapse the results list once picked
+      _results = [];
       _searchController.text = snap.name;
     });
     try {
-      final info = await _snapd.getSnapInfo(snap.name);
+      final info = await _store.getSnapInfo(snap.name, widget.architecture);
       setState(() {
         _availableChannels =
-            info.channels.isEmpty ? ['stable'] : info.channels;
+            info.channels.isEmpty ? ['latest/stable'] : info.channels;
         _selected = info;
+        // Re-map type authoritatively from full info if available.
+        if (info.type != null) _type = _mapStoreType(info.type);
         _channel = _defaultChannel();
       });
     } catch (_) {
       setState(() {
-        _availableChannels = ['stable'];
-        _channel = 'stable';
+        _availableChannels = ['latest/stable'];
+        _channel = 'latest/stable';
       });
     } finally {
       if (mounted) setState(() => _loadingChannels = false);
@@ -117,7 +141,7 @@ class _SnapSearchFieldState extends State<SnapSearchField> {
     final list = _filteredChannels();
     if (list.isEmpty) return null;
     return list.firstWhere(
-      (c) => c.endsWith('/stable') || c == 'stable',
+      (c) => c.endsWith('/stable'),
       orElse: () => list.first,
     );
   }
@@ -154,25 +178,6 @@ class _SnapSearchFieldState extends State<SnapSearchField> {
     }
   }
 
-  /// Maps snapd's snap type string to our SnapType enum.
-  /// Defaults to app when unknown.
-  static SnapType _mapStoreType(String? storeType) {
-    switch (storeType) {
-      case 'kernel':
-        return SnapType.kernel;
-      case 'gadget':
-        return SnapType.gadget;
-      case 'base':
-        return SnapType.base;
-      case 'snapd':
-        return SnapType.snapd;
-      case 'os': // legacy alias sometimes seen
-        return SnapType.base;
-      default:
-        return SnapType.app;
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final channels = _filteredChannels();
@@ -189,7 +194,7 @@ class _SnapSearchFieldState extends State<SnapSearchField> {
               child: TextField(
                 controller: _searchController,
                 decoration: InputDecoration(
-                  labelText: 'Search snap',
+                  labelText: 'Search snap (${widget.architecture})',
                   prefixIcon: const Icon(Icons.search),
                   suffixIcon: _searching
                       ? const Padding(

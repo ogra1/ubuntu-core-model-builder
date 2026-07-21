@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:yaru/yaru.dart';
 import '../models/model_assertion.dart';
 import '../models/snap_entry.dart';
-import '../services/snapd_service.dart';
+import '../services/store_api_service.dart';
 import '../widgets/snap_search_field.dart';
 
 class SnapsPage extends StatefulWidget {
@@ -19,21 +19,19 @@ class SnapsPage extends StatefulWidget {
 }
 
 class _SnapsPageState extends State<SnapsPage> {
-  final _snapd = SnapdService();
+  final _store = StoreApiService();
   bool _seedingBase = false;
   String? _seedError;
+
+  String get _arch => widget.model.architecture.name;
 
   @override
   void initState() {
     super.initState();
-    // Seed required snaps after the first frame so setState is safe.
     WidgetsBinding.instance
         .addPostFrameCallback((_) => _seedRequiredSnaps());
   }
 
-  /// Ensures the base snap (matching the metadata base) and the snapd snap
-  /// are present. Any snap the user already added of the same type is left
-  /// untouched so they can customize the channel.
   Future<void> _seedRequiredSnaps() async {
     setState(() {
       _seedingBase = true;
@@ -41,7 +39,6 @@ class _SnapsPageState extends State<SnapsPage> {
     });
     final errors = <String>[];
     try {
-      // --- base snap ---
       final baseName = widget.model.base;
       final hasBase =
           widget.model.snaps.any((s) => s.type == SnapType.base);
@@ -57,7 +54,6 @@ class _SnapsPageState extends State<SnapsPage> {
         }
       }
 
-      // --- snapd snap ---
       final hasSnapd =
           widget.model.snaps.any((s) => s.type == SnapType.snapd);
       if (!hasSnapd) {
@@ -79,27 +75,26 @@ class _SnapsPageState extends State<SnapsPage> {
     }
   }
 
-  /// Resolves a snap by name and adds it with a sensible channel. If
-  /// [preferTrack] is set (e.g. "24"), prefers channels on that track.
   Future<void> _seedOne({
     required String name,
     required SnapType type,
     String? preferTrack,
   }) async {
-    final info = await _snapd.getSnapInfo(name);
-    String channel = 'stable';
+    final info = await _store.getSnapInfo(name, _arch);
+    String channel = 'latest/stable';
     if (preferTrack != null) {
       channel = info.channels.firstWhere(
         (c) => c.startsWith('$preferTrack/stable'),
         orElse: () => info.channels.firstWhere(
           (c) => c.startsWith('$preferTrack/'),
-          orElse: () =>
-              info.channels.isNotEmpty ? info.channels.first : 'stable',
+          orElse: () => info.channels.isNotEmpty
+              ? info.channels.first
+              : 'latest/stable',
         ),
       );
     } else if (info.channels.isNotEmpty) {
       channel = info.channels.firstWhere(
-        (c) => c.endsWith('/stable') || c == 'stable',
+        (c) => c.endsWith('/stable'),
         orElse: () => info.channels.first,
       );
     }
@@ -142,9 +137,10 @@ class _SnapsPageState extends State<SnapsPage> {
         Text('Snaps', style: Theme.of(context).textTheme.headlineSmall),
         const SizedBox(height: 8),
         Text(
-          'A model requires a kernel, gadget, snapd, and a base snap. '
-          'The base and snapd snaps are added automatically; '
-          'you can remove them to pick a different channel.',
+          'Searching the store for architecture "$_arch". A model requires '
+          'a kernel, gadget, snapd, and a base snap. The base and snapd '
+          'snaps are added automatically; you can remove them to pick a '
+          'different channel.',
           style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                 color: Theme.of(context).hintColor,
               ),
@@ -191,6 +187,7 @@ class _SnapsPageState extends State<SnapsPage> {
         SnapSearchField(
           onSnapSelected: _addSnap,
           modelBase: widget.model.base,
+          architecture: _arch,
         ),
         const SizedBox(height: 24),
         if (snaps.isEmpty)
@@ -233,11 +230,7 @@ class _SnapsPageState extends State<SnapsPage> {
         _reqChip(context, 'kernel', _hasType(SnapType.kernel)),
         _reqChip(context, 'gadget', _hasType(SnapType.gadget)),
         _reqChip(context, 'snapd', _hasType(SnapType.snapd)),
-        _reqChip(
-          context,
-          widget.model.base ?? 'base',
-          _baseMatches,
-        ),
+        _reqChip(context, widget.model.base ?? 'base', _baseMatches),
       ],
     );
   }
