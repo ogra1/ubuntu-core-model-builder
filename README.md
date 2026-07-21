@@ -2,15 +2,16 @@
 
 A Flutter desktop GUI for creating and signing Ubuntu Core model assertions.
 
-<img width="2604" height="1602" alt="Screenshot from 2026-07-21 19-26-00" src="https://github.com/user-attachments/assets/621419f5-cac1-4f79-906f-d5127fbfb0c3" />
+## Screenshots
 
-<img width="2604" height="1602" alt="Screenshot from 2026-07-21 19-25-49" src="https://github.com/user-attachments/assets/f175f154-e782-4494-bb28-b85220471a48" />
-
-<img width="2604" height="1602" alt="Screenshot from 2026-07-21 19-25-24" src="https://github.com/user-attachments/assets/f5a4022b-4567-45e5-906c-fa30ad9aefd0" />
-
-<img width="2604" height="1602" alt="Screenshot from 2026-07-21 19-27-07" src="https://github.com/user-attachments/assets/79b0c06e-1513-41e6-b408-04c5c31e4d35" />
-
-<img width="2604" height="1602" alt="Screenshot from 2026-07-21 19-27-17" src="https://github.com/user-attachments/assets/e8163303-3a57-4da0-9dda-da7c989aa2d9" />
+<img width="2604" height="1602" alt="Screenshot from 2026-07-21 22-20-07" src="https://github.com/user-attachments/assets/dd67181f-e649-4b75-acca-e662784fbfa6" />
+<img width="2604" height="1602" alt="Screenshot from 2026-07-21 22-21-04" src="https://github.com/user-attachments/assets/85db2d0c-390e-4d48-a1fb-8a2caef6f396" />
+<img width="2604" height="1710" alt="Screenshot from 2026-07-21 22-23-22" src="https://github.com/user-attachments/assets/9c8891ac-0301-42a8-bac7-64accaf0ccbe" />
+<img width="2604" height="1710" alt="Screenshot from 2026-07-21 22-23-43" src="https://github.com/user-attachments/assets/d14ae839-a41d-426c-8a6b-0431a46681fc" />
+<img width="2604" height="1710" alt="Screenshot from 2026-07-21 22-24-09" src="https://github.com/user-attachments/assets/a91637a2-fd7e-4954-bd20-9d6106925871" />
+<img width="2604" height="1710" alt="Screenshot from 2026-07-21 22-24-32" src="https://github.com/user-attachments/assets/236269ac-21f1-4469-974c-c45a8800eb23" />
+<img width="2604" height="1710" alt="Screenshot from 2026-07-21 22-24-53" src="https://github.com/user-attachments/assets/6d4f99c2-e733-4014-95ec-11d9a70898a0" />
+<img width="2604" height="1710" alt="Screenshot from 2026-07-21 22-25-39" src="https://github.com/user-attachments/assets/e32ea678-d347-4efb-b709-f4f2056cd242" />
 
 ## Features
 - Auto-detects store account via snapcraft whoami
