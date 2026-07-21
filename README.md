@@ -10,7 +10,8 @@ A Flutter desktop GUI for creating and signing Ubuntu Core model assertions.
 
 <img width="2773" height="1674" alt="image" src="https://github.com/user-attachments/assets/b1df51a1-f79e-4a4b-87f1-894ff40256b9" />
 
-<img width="2773" height="1674" alt="image" src="https://github.com/user-attachments/assets/25adcb0e-faa4-44da-beb2-459af9c959a8" />
+<img width="2773" height="1674" alt="image" src="https://github.com/user-attachments/assets/28b72718-f494-4875-9e06-4682fdb041bc" />
+
 
 ## Features
 - Auto-detects store account via snapcraft whoami
