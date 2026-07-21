@@ -1,0 +1,26 @@
+# Dart / Flutter
+.dart_tool/
+.packages
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+
+# Flutter Linux ephemeral (generated; keep the rest of linux/)
+linux/flutter/ephemeral/
+
+# IDE
+*.iml
+.idea/
+.vscode/
+
+# snapcraft
+parts/
+stage/
+prime/
+.snapcraft/
+*.snap
+
+# OS
+.DS_Store
