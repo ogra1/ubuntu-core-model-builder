@@ -2,16 +2,15 @@
 
 A Flutter desktop GUI for creating and signing Ubuntu Core model assertions.
 
-<img width="2773" height="1674" alt="image" src="https://github.com/user-attachments/assets/8da7c134-723f-4269-ba75-9ce78342d95c" />
+<img width="2604" height="1602" alt="Screenshot from 2026-07-21 19-26-00" src="https://github.com/user-attachments/assets/621419f5-cac1-4f79-906f-d5127fbfb0c3" />
 
-<img width="2773" height="1674" alt="image" src="https://github.com/user-attachments/assets/dac91233-c568-4945-a644-99745775bfd0" />
+<img width="2604" height="1602" alt="Screenshot from 2026-07-21 19-25-49" src="https://github.com/user-attachments/assets/f175f154-e782-4494-bb28-b85220471a48" />
 
-<img width="2773" height="1674" alt="image" src="https://github.com/user-attachments/assets/7897e5cd-24cf-44b1-acd9-1b478b89fdf0" />
+<img width="2604" height="1602" alt="Screenshot from 2026-07-21 19-25-24" src="https://github.com/user-attachments/assets/f5a4022b-4567-45e5-906c-fa30ad9aefd0" />
 
-<img width="2773" height="1674" alt="image" src="https://github.com/user-attachments/assets/b1df51a1-f79e-4a4b-87f1-894ff40256b9" />
+<img width="2604" height="1602" alt="Screenshot from 2026-07-21 19-27-07" src="https://github.com/user-attachments/assets/79b0c06e-1513-41e6-b408-04c5c31e4d35" />
 
-<img width="2773" height="1674" alt="image" src="https://github.com/user-attachments/assets/28b72718-f494-4875-9e06-4682fdb041bc" />
-
+<img width="2604" height="1602" alt="Screenshot from 2026-07-21 19-27-17" src="https://github.com/user-attachments/assets/e8163303-3a57-4da0-9dda-da7c989aa2d9" />
 
 ## Features
 - Auto-detects store account via snapcraft whoami
