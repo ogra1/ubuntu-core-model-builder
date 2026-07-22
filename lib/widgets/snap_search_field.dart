@@ -146,12 +146,6 @@ class _SnapSearchFieldState extends State<SnapSearchField> {
     );
   }
 
-  void _onTypeChanged(SnapType? t) {
-    setState(() {
-      _type = t ?? SnapType.app;
-      _channel = _defaultChannel();
-    });
-  }
 
   Future<void> _add() async {
     final sel = _selected;
@@ -259,15 +253,28 @@ class _SnapSearchFieldState extends State<SnapSearchField> {
             const SizedBox(width: 12),
             SizedBox(
               width: 150,
+              // Read-only Type: a disabled dropdown so its geometry matches
+              // the Channel dropdown exactly. The arrow is hidden and the
+              // text uses the normal colour so it reads as an informational
+              // field rather than a disabled control.
               child: DropdownButtonFormField<SnapType>(
-                value: _type,
+                value: _selected == null ? null : _type,
                 isExpanded: true,
                 decoration: const InputDecoration(labelText: 'Type'),
+                icon: const SizedBox.shrink(),
+                disabledHint: Text(
+                  _selected == null ? '-' : _type.name,
+                  style: TextStyle(
+                    color: _selected == null
+                        ? Theme.of(context).hintColor
+                        : Theme.of(context).textTheme.bodyLarge?.color,
+                  ),
+                ),
                 items: SnapType.values
                     .map((t) =>
                         DropdownMenuItem(value: t, child: Text(t.name)))
                     .toList(),
-                onChanged: _onTypeChanged,
+                onChanged: null,
               ),
             ),
             const SizedBox(width: 12),
