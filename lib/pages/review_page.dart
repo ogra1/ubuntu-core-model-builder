@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:file_selector/file_selector.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:yaru/yaru.dart';
 
 import '../models/wizard_step.dart';
@@ -17,8 +18,40 @@ class ReviewPage extends StatefulWidget {
 }
 
 class _ReviewPageState extends State<ReviewPage> {
+  static const _prefAlsoSaveJson = 'review.alsoSaveJson';
+
   VerificationReport? _report;
   String? _savedPath;
+  String? _jsonHeader; // the unsigned JSON that was signed
+  bool _alsoSaveJson = false; // default unchecked; overridden by saved pref
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPrefs();
+  }
+
+  Future<void> _loadPrefs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final saved = prefs.getBool(_prefAlsoSaveJson);
+      if (saved != null && mounted) {
+        setState(() => _alsoSaveJson = saved);
+      }
+    } catch (_) {
+      // If prefs are unavailable, keep the default (false).
+    }
+  }
+
+  Future<void> _setAlsoSaveJson(bool value) async {
+    setState(() => _alsoSaveJson = value);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_prefAlsoSaveJson, value);
+    } catch (_) {
+      // Non-fatal: the choice just won't persist this time.
+    }
+  }
 
   Future<void> _sign() async {
     final keyName = widget.state.selectedKeyName;
@@ -37,6 +70,7 @@ class _ReviewPageState extends State<ReviewPage> {
 
       setState(() {
         _report = report;
+        _jsonHeader = result.jsonHeader;
         widget.state.signedAssertion =
             report.allPassed ? result.signedAssertion : null;
       });
@@ -60,7 +94,8 @@ class _ReviewPageState extends State<ReviewPage> {
     final signed = widget.state.signedAssertion;
     if (signed == null) return;
 
-    final suggested = '${widget.state.model.model ?? "model"}.model';
+    final modelName = widget.state.model.model ?? 'model';
+    final suggested = '$modelName.model';
     final location = await getSaveLocation(
       suggestedName: suggested,
       acceptedTypeGroups: [
@@ -69,16 +104,49 @@ class _ReviewPageState extends State<ReviewPage> {
     );
     if (location == null) return;
 
-    await SnapcraftService().saveToFile(signed, location.path);
+    final svc = SnapcraftService();
+    await svc.saveToFile(signed, location.path);
     setState(() => _savedPath = location.path);
+
+    String? jsonPath;
+    if (_alsoSaveJson && _jsonHeader != null) {
+      jsonPath = _jsonSiblingPath(location.path);
+      try {
+        await svc.saveToFile(_jsonHeader!, jsonPath);
+      } catch (e) {
+        jsonPath = null;
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              behavior: SnackBarBehavior.floating,
+              backgroundColor: Theme.of(context).colorScheme.errorContainer,
+              content: Text('Saved .model but failed to save JSON: $e'),
+            ),
+          );
+        }
+      }
+    }
+
     if (mounted) {
+      final msg = jsonPath != null
+          ? 'Saved ${location.path}\nand $jsonPath'
+          : 'Saved ${location.path}';
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Saved to ${location.path}'),
+          content: Text(msg),
           behavior: SnackBarBehavior.floating,
         ),
       );
     }
+  }
+
+  String _jsonSiblingPath(String modelPath) {
+    final dot = modelPath.lastIndexOf('.');
+    final slash = modelPath.lastIndexOf(RegExp(r'[/\\]'));
+    if (dot > slash) {
+      return '${modelPath.substring(0, dot)}.json';
+    }
+    return '$modelPath.json';
   }
 
   Future<void> _testImport() async {
@@ -180,6 +248,36 @@ class _ReviewPageState extends State<ReviewPage> {
               onPressed: signed == null ? null : _save,
               icon: const Icon(Icons.save_outlined),
               label: const Text('Save .model'),
+            ),
+            const SizedBox(width: 12),
+            InkWell(
+              onTap: (_jsonHeader == null)
+                  ? null
+                  : () => _setAlsoSaveJson(!_alsoSaveJson),
+              borderRadius: BorderRadius.circular(4),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 8, vertical: 4),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Checkbox(
+                      value: _alsoSaveJson,
+                      onChanged: (_jsonHeader == null)
+                          ? null
+                          : (v) => _setAlsoSaveJson(v ?? false),
+                    ),
+                    Text(
+                      'Also save unsigned .json',
+                      style: TextStyle(
+                        color: _jsonHeader == null
+                            ? Theme.of(context).disabledColor
+                            : null,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
           ],
         ),
