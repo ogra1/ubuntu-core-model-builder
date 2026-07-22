@@ -21,6 +21,7 @@ class SnapsPage extends StatefulWidget {
 class _SnapsPageState extends State<SnapsPage> {
   final _store = StoreApiService();
   bool _seedingBase = false;
+  bool _busy = false;
   String? _seedError;
 
   String get _arch => widget.model.architecture.name;
@@ -75,10 +76,11 @@ class _SnapsPageState extends State<SnapsPage> {
     }
   }
 
-  Future<void> _seedOne({
+  Future<SnapEntry> _seedOne({
     required String name,
     required SnapType type,
     String? preferTrack,
+    bool autoAdded = false,
   }) async {
     final info = await _store.getSnapInfo(name, _arch);
     String channel = 'latest/stable';
@@ -98,29 +100,148 @@ class _SnapsPageState extends State<SnapsPage> {
         orElse: () => info.channels.first,
       );
     }
-    _addSnap(SnapEntry(
+    final entry = SnapEntry(
       name: info.name,
       id: info.snapId,
       type: type,
       defaultChannel: channel,
-    ));
+      autoAdded: autoAdded,
+    );
+    _insertSnap(entry);
+    return entry;
   }
 
-  void _addSnap(SnapEntry entry) {
+  void _insertSnap(SnapEntry entry) {
     widget.model.snaps.removeWhere((s) => s.name == entry.name);
-    // App snaps default to optional presence; infrastructure snaps null.
-    final withPresence = entry.type == SnapType.app
-        ? entry.copyWith(presence: SnapPresence.optional)
-        : entry;
-    widget.model.snaps.add(withPresence);
+    widget.model.snaps.add(entry);
     widget.onChanged();
     if (mounted) setState(() {});
   }
 
+  Future<void> _onSnapAdded(SnapEntry entry, String? appBase) async {
+    final toAdd = entry.type == SnapType.app
+        ? entry.copyWith(
+            presence: SnapPresence.optional,
+            appBase: appBase,
+          )
+        : entry;
+    _insertSnap(toAdd);
+
+    if (entry.type == SnapType.app && appBase != null) {
+      final alreadyPresent = widget.model.snaps
+          .any((s) => s.type == SnapType.base && s.name == appBase);
+      final isModelBase = appBase == widget.model.base;
+
+      if (!alreadyPresent && !isModelBase) {
+        setState(() => _busy = true);
+        try {
+          final track = RegExp(r'(\d+)').firstMatch(appBase)?.group(1);
+          await _seedOne(
+            name: appBase,
+            type: SnapType.base,
+            preferTrack: track,
+            autoAdded: true,
+          );
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                behavior: SnackBarBehavior.floating,
+                duration: const Duration(seconds: 6),
+                content: Text(
+                  'Added base snap "$appBase" automatically because '
+                  '"${entry.name}" is built on it. It is listed before the '
+                  'app so snapd processes it first during image build.',
+                ),
+              ),
+            );
+          }
+        } catch (e) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                behavior: SnackBarBehavior.floating,
+                backgroundColor:
+                    Theme.of(context).colorScheme.errorContainer,
+                content: Text(
+                  'Could not auto-add base "$appBase" needed by '
+                  '"${entry.name}": $e',
+                ),
+              ),
+            );
+          }
+        } finally {
+          if (mounted) setState(() => _busy = false);
+        }
+      }
+    }
+
+    _recomputeBasePresence();
+  }
+
   void _removeSnap(SnapEntry entry) {
+    // Prevent removing a dependent base while an app still needs it.
+    final isDependentBase =
+        entry.type == SnapType.base && entry.name != widget.model.base;
+    if (isDependentBase && _baseHasDependents(entry.name)) {
+      _showBaseLockedMessage(entry.name);
+      return;
+    }
+
+    final removedAppBase =
+        entry.type == SnapType.app ? entry.appBase : null;
+
     widget.model.snaps.remove(entry);
+
+    // If we removed an app, auto-remove its base when that base is now
+    // orphaned AND was auto-added by us (never remove user-added bases).
+    if (removedAppBase != null && removedAppBase != widget.model.base) {
+      final base = _findBase(removedAppBase);
+      if (base != null &&
+          base.autoAdded &&
+          !_baseHasDependents(removedAppBase)) {
+        widget.model.snaps.remove(base);
+        _showBaseAutoRemovedMessage(removedAppBase, entry.name);
+      }
+    }
+
     widget.onChanged();
+    _recomputeBasePresence();
     setState(() {});
+  }
+
+  SnapEntry? _findBase(String name) {
+    for (final s in widget.model.snaps) {
+      if (s.type == SnapType.base && s.name == name) return s;
+    }
+    return null;
+  }
+
+  void _showBaseLockedMessage(String baseName) {
+    final dependents = widget.model.snaps
+        .where((s) => s.type == SnapType.app && s.appBase == baseName)
+        .map((s) => s.name)
+        .toList();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        content: Text(
+          'Cannot remove base "$baseName": it is required by '
+          '${dependents.join(", ")}. Remove those app(s) first.',
+        ),
+      ),
+    );
+  }
+
+  void _showBaseAutoRemovedMessage(String baseName, String appName) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        content: Text(
+          'Also removed auto-added base "$baseName" — no remaining snap '
+          'depends on it after removing "$appName".',
+        ),
+      ),
+    );
   }
 
   void _togglePresence(SnapEntry entry) {
@@ -131,8 +252,53 @@ class _SnapsPageState extends State<SnapsPage> {
         : SnapPresence.required_;
     widget.model.snaps[idx] = entry.copyWith(presence: next);
     widget.onChanged();
+    _recomputeBasePresence();
     setState(() {});
   }
+
+  void _recomputeBasePresence() {
+    final modelBase = widget.model.base;
+
+    bool requiredAppUses(String baseName) => widget.model.snaps.any(
+          (s) =>
+              s.type == SnapType.app &&
+              s.presence == SnapPresence.required_ &&
+              s.appBase == baseName,
+        );
+
+    var changed = false;
+    for (var i = 0; i < widget.model.snaps.length; i++) {
+      final s = widget.model.snaps[i];
+      if (s.type != SnapType.base) continue;
+      if (s.name == modelBase) {
+        if (s.presence != null) {
+          widget.model.snaps[i] = SnapEntry(
+            name: s.name,
+            id: s.id,
+            type: s.type,
+            defaultChannel: s.defaultChannel,
+            autoAdded: s.autoAdded,
+          );
+          changed = true;
+        }
+        continue;
+      }
+
+      final desired = requiredAppUses(s.name)
+          ? SnapPresence.required_
+          : SnapPresence.optional;
+      if (s.presence != desired) {
+        widget.model.snaps[i] = s.copyWith(presence: desired);
+        changed = true;
+      }
+    }
+    if (changed) widget.onChanged();
+  }
+
+  /// True if [baseName] is used by at least one app snap in the model.
+  bool _baseHasDependents(String baseName) => widget.model.snaps.any(
+        (s) => s.type == SnapType.app && s.appBase == baseName,
+      );
 
   bool _hasType(SnapType t) => widget.model.snaps.any((s) => s.type == t);
 
@@ -146,78 +312,94 @@ class _SnapsPageState extends State<SnapsPage> {
   @override
   Widget build(BuildContext context) {
     final snaps = widget.model.snaps;
-    return ListView(
-      padding: const EdgeInsets.all(24),
+    return Stack(
       children: [
-        Text('Snaps', style: Theme.of(context).textTheme.headlineSmall),
-        const SizedBox(height: 8),
-        Text(
-          'Searching the store for architecture "$_arch". A model requires '
-          'a kernel, gadget, snapd, and a base snap. Additional app snaps '
-          'are optional by default; click the lock to mark one as required '
-          '(presence: required) in the model.',
-          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: Theme.of(context).hintColor,
+        ListView(
+          padding: const EdgeInsets.all(24),
+          children: [
+            Text('Snaps', style: Theme.of(context).textTheme.headlineSmall),
+            const SizedBox(height: 8),
+            Text(
+              'Searching the store for architecture "$_arch". A model '
+              'requires a kernel, gadget, snapd, and a base snap. When you '
+              'add an app snap built on a different base, that base is added '
+              'automatically and removed again when no snap needs it. App '
+              'snaps are optional by default; click the lock to mark one '
+              'required. A dependent base becomes required only when a '
+              'required app uses it.',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Theme.of(context).hintColor,
+                  ),
+            ),
+            const SizedBox(height: 16),
+            _buildRequirementChips(context),
+            const SizedBox(height: 16),
+            if (_seedingBase)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 8),
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                    SizedBox(width: 12),
+                    Text('Adding required snaps...'),
+                  ],
+                ),
               ),
-        ),
-        const SizedBox(height: 16),
-        _buildRequirementChips(context),
-        const SizedBox(height: 16),
-        if (_seedingBase)
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 8),
-            child: Row(
-              children: [
-                SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
+            if (_seedError != null)
+              Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.errorContainer,
+                  borderRadius: BorderRadius.circular(8),
                 ),
-                SizedBox(width: 12),
-                Text('Adding required snaps...'),
-              ],
-            ),
-          ),
-        if (_seedError != null)
-          Container(
-            margin: const EdgeInsets.only(bottom: 8),
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.errorContainer,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Row(
-              children: [
-                Icon(Icons.error_outline,
-                    color: Theme.of(context).colorScheme.onErrorContainer),
-                const SizedBox(width: 12),
-                Expanded(child: Text(_seedError!)),
-                TextButton(
-                  onPressed: _seedRequiredSnaps,
-                  child: const Text('Retry'),
+                child: Row(
+                  children: [
+                    Icon(Icons.error_outline,
+                        color:
+                            Theme.of(context).colorScheme.onErrorContainer),
+                    const SizedBox(width: 12),
+                    Expanded(child: Text(_seedError!)),
+                    TextButton(
+                      onPressed: _seedRequiredSnaps,
+                      child: const Text('Retry'),
+                    ),
+                  ],
                 ),
-              ],
+              ),
+            SnapSearchField(
+              onSnapSelected: _onSnapAdded,
+              modelBase: widget.model.base,
+              architecture: _arch,
             ),
-          ),
-        SnapSearchField(
-          onSnapSelected: _addSnap,
-          modelBase: widget.model.base,
-          architecture: _arch,
+            const SizedBox(height: 24),
+            if (snaps.isEmpty)
+              Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(32),
+                  child: Text('No snaps added yet.',
+                      style: Theme.of(context).textTheme.bodyMedium),
+                ),
+              )
+            else
+              YaruSection(
+                headline: Text('Snaps (${snaps.length})'),
+                child: Column(
+                  children:
+                      snaps.map((s) => _buildSnapTile(context, s)).toList(),
+                ),
+              ),
+          ],
         ),
-        const SizedBox(height: 24),
-        if (snaps.isEmpty)
-          Center(
-            child: Padding(
-              padding: const EdgeInsets.all(32),
-              child: Text('No snaps added yet.',
-                  style: Theme.of(context).textTheme.bodyMedium),
-            ),
-          )
-        else
-          YaruSection(
-            headline: Text('Snaps (${snaps.length})'),
-            child: Column(
-              children: snaps.map((s) => _buildSnapTile(context, s)).toList(),
+        if (_busy)
+          const Positioned.fill(
+            child: ColoredBox(
+              color: Color(0x22000000),
+              child: Center(child: CircularProgressIndicator()),
             ),
           ),
       ],
@@ -226,7 +408,10 @@ class _SnapsPageState extends State<SnapsPage> {
 
   Widget _buildSnapTile(BuildContext context, SnapEntry s) {
     final isApp = s.type == SnapType.app;
+    final isDependentBase =
+        s.type == SnapType.base && s.name != widget.model.base;
     final isRequired = s.presence == SnapPresence.required_;
+    final baseLocked = isDependentBase && _baseHasDependents(s.name);
 
     final trailing = Row(
       mainAxisSize: MainAxisSize.min,
@@ -244,15 +429,19 @@ class _SnapsPageState extends State<SnapsPage> {
           ),
         IconButton(
           icon: const Icon(Icons.delete_outline),
-          tooltip: 'Remove',
-          onPressed: () => _removeSnap(s),
+          tooltip: baseLocked
+              ? 'Required by dependent app(s); remove those first'
+              : 'Remove',
+          onPressed: baseLocked ? null : () => _removeSnap(s),
         ),
       ],
     );
 
-    final presenceLabel = isApp
-        ? (isRequired ? '  •  required' : '  •  optional')
-        : '';
+    String presenceLabel = '';
+    if (isApp || isDependentBase) {
+      presenceLabel = isRequired ? '  •  required' : '  •  optional';
+      if (isDependentBase) presenceLabel += ' (auto)';
+    }
 
     return YaruTile(
       leading: _typeChip(context, s.type),

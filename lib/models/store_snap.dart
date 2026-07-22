@@ -4,6 +4,7 @@ class StoreSnap {
   final String? title;
   final String? summary;
   final String? type;
+  final String? base; // the base this snap is built on (e.g. "core22")
   final List<String> channels;
 
   StoreSnap({
@@ -12,6 +13,7 @@ class StoreSnap {
     this.title,
     this.summary,
     this.type,
+    this.base,
     this.channels = const [],
   });
 
@@ -22,6 +24,7 @@ class StoreSnap {
       title: json['title'] as String?,
       summary: json['summary'] as String?,
       type: json['type'] as String?,
+      base: json['base'] as String?,
     );
   }
 }

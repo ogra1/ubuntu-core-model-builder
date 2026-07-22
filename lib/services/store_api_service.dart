@@ -14,7 +14,7 @@ class StoreApiService {
       };
 
   /// Search snaps for a given architecture.
-  /// Observed results[] shape: name, snap-id, revision:{type}, snap:{title,summary}.
+  /// results[] shape: name, snap-id, revision:{type}, snap:{title,summary}.
   Future<List<StoreSnap>> findSnaps(String query, String architecture) async {
     final uri = Uri.parse(
       '$_base/snaps/find?q=${Uri.encodeQueryComponent(query)}'
@@ -44,16 +44,20 @@ class StoreApiService {
     return out;
   }
 
-  /// Get detailed info (channel map + snap-id) for a snap on a given arch.
+  /// Get detailed info (channel map, snap-id, and per-architecture base) for
+  /// a snap on a given architecture.
   ///
-  /// NOTE: the info endpoint does NOT accept "channel" as a field. The
-  /// "channel-map" is returned by default; each entry carries a "channel"
-  /// object with track/risk/architecture. Requested fields (revision, type)
-  /// apply to each channel-map entry.
+  /// The channel-map entries carry the interesting per-revision data:
+  ///   { "base": "core24",
+  ///     "type": "app",
+  ///     "channel": { "architecture": <arch>, "name": "...",
+  ///                  "track": "...", "risk": "..." } }
+  /// The base can differ per architecture/channel, so we read it from the
+  /// entries matching the requested architecture.
   Future<StoreSnap> getSnapInfo(String name, String architecture) async {
     final uri = Uri.parse(
       '$_base/snaps/info/${Uri.encodeComponent(name)}'
-      '?fields=snap-id,title,summary,type,revision',
+      '?fields=snap-id,title,summary,type,revision,base',
     );
     final resp = await http.get(uri, headers: _headers(architecture));
     if (resp.statusCode != 200) {
@@ -67,34 +71,50 @@ class StoreApiService {
 
     final channels = <String>{};
     String? typeFromMap;
+    String? baseForArch;
+    String? baseStablePreferred;
+
     for (final entry in channelMap) {
       final m = entry as Map<String, dynamic>;
+      final ch = m['channel'] as Map<String, dynamic>?;
+      final arch = ch?['architecture'] as String?;
+
+      // Only consider entries for the requested architecture.
+      if (arch != null && arch != architecture) continue;
+
+      // Type (per-revision or per-entry).
       final revision = m['revision'];
       if (revision is Map<String, dynamic>) {
         typeFromMap ??= revision['type'] as String?;
       }
       typeFromMap ??= m['type'] as String?;
 
-      final ch = m['channel'] as Map<String, dynamic>?;
-      if (ch == null) continue;
-      final arch = ch['architecture'] as String?;
-      if (arch != null && arch != architecture) continue;
+      // Base for this architecture. Prefer the value on a stable channel,
+      // but fall back to the first arch-matching entry.
+      final entryBase = m['base'] as String?;
+      if (entryBase != null) {
+        baseForArch ??= entryBase;
+        final risk = ch?['risk'] as String?;
+        if (risk == 'stable') {
+          baseStablePreferred ??= entryBase;
+        }
+      }
 
-      // Prefer an explicit channel name; else compose from track/risk.
-      // Always use the canonical "track/risk" form. snap sign requires a
-      // track in the model's default-channel (e.g. "latest/stable"), so we
-      // must NOT collapse "latest/stable" down to "stable".
-      final track = ch['track'] as String? ?? 'latest';
-      final risk = ch['risk'] as String? ?? 'stable';
-      final chanName = ch['name'] as String?;
-      if (chanName != null && chanName.contains('/')) {
-        channels.add(chanName);
-      } else {
-        channels.add('$track/$risk');
+      // Channel name in canonical track/risk form.
+      if (ch != null) {
+        final track = ch['track'] as String? ?? 'latest';
+        final risk = ch['risk'] as String? ?? 'stable';
+        final chanName = ch['name'] as String?;
+        if (chanName != null && chanName.contains('/')) {
+          channels.add(chanName);
+        } else {
+          channels.add('$track/$risk');
+        }
       }
     }
 
     final sorted = channels.toList()..sort(_channelCompare);
+    final resolvedBase = baseStablePreferred ?? baseForArch;
 
     return StoreSnap(
       name: (body['name'] ?? name) as String,
@@ -102,6 +122,7 @@ class StoreApiService {
       title: snap['title'] as String?,
       summary: snap['summary'] as String?,
       type: (snap['type'] ?? typeFromMap) as String?,
+      base: resolvedBase,
       channels: sorted,
     );
   }

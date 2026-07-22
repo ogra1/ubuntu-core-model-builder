@@ -57,8 +57,9 @@ class AssertionBuilder {
       'type': snap.type.name,
       'default-channel': snap.defaultChannel,
     };
-    // Emit presence only for app snaps that are explicitly optional/required.
-    if (snap.type == SnapType.app && snap.presence != null) {
+    // Emit presence for app snaps and for dependent base snaps (both may be
+    // optional/required). Infrastructure snaps leave presence null.
+    if (snap.presence != null) {
       map['presence'] =
           snap.presence == SnapPresence.required_ ? 'required' : 'optional';
     }

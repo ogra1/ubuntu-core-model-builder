@@ -5,7 +5,7 @@ import '../models/snap_entry.dart';
 import '../services/store_api_service.dart';
 
 class SnapSearchField extends StatefulWidget {
-  final void Function(SnapEntry) onSnapSelected;
+  final void Function(SnapEntry entry, String? base) onSnapSelected;
   final String? modelBase;
 
   /// The model's target architecture (e.g. "arm64"). Required so we search
@@ -160,12 +160,15 @@ class _SnapSearchFieldState extends State<SnapSearchField> {
 
     setState(() => _adding = true);
     try {
-      widget.onSnapSelected(SnapEntry(
-        name: sel.name,
-        id: sel.snapId,
-        type: _type,
-        defaultChannel: chan,
-      ));
+      widget.onSnapSelected(
+        SnapEntry(
+          name: sel.name,
+          id: sel.snapId,
+          type: _type,
+          defaultChannel: chan,
+        ),
+        sel.base, // resolved base of this snap (may be null)
+      );
       setState(() {
         _selected = null;
         _availableChannels = [];
