@@ -57,6 +57,11 @@ class AssertionBuilder {
       'type': snap.type.name,
       'default-channel': snap.defaultChannel,
     };
+    // Emit presence only for app snaps that are explicitly optional/required.
+    if (snap.type == SnapType.app && snap.presence != null) {
+      map['presence'] =
+          snap.presence == SnapPresence.required_ ? 'required' : 'optional';
+    }
     map.removeWhere((_, v) => v == null || (v is String && v.isEmpty));
     return map;
   }

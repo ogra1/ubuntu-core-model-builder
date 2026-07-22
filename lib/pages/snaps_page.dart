@@ -108,13 +108,28 @@ class _SnapsPageState extends State<SnapsPage> {
 
   void _addSnap(SnapEntry entry) {
     widget.model.snaps.removeWhere((s) => s.name == entry.name);
-    widget.model.snaps.add(entry);
+    // App snaps default to optional presence; infrastructure snaps null.
+    final withPresence = entry.type == SnapType.app
+        ? entry.copyWith(presence: SnapPresence.optional)
+        : entry;
+    widget.model.snaps.add(withPresence);
     widget.onChanged();
     if (mounted) setState(() {});
   }
 
   void _removeSnap(SnapEntry entry) {
     widget.model.snaps.remove(entry);
+    widget.onChanged();
+    setState(() {});
+  }
+
+  void _togglePresence(SnapEntry entry) {
+    final idx = widget.model.snaps.indexOf(entry);
+    if (idx < 0) return;
+    final next = entry.presence == SnapPresence.required_
+        ? SnapPresence.optional
+        : SnapPresence.required_;
+    widget.model.snaps[idx] = entry.copyWith(presence: next);
     widget.onChanged();
     setState(() {});
   }
@@ -138,9 +153,9 @@ class _SnapsPageState extends State<SnapsPage> {
         const SizedBox(height: 8),
         Text(
           'Searching the store for architecture "$_arch". A model requires '
-          'a kernel, gadget, snapd, and a base snap. The base and snapd '
-          'snaps are added automatically; you can remove them to pick a '
-          'different channel.',
+          'a kernel, gadget, snapd, and a base snap. Additional app snaps '
+          'are optional by default; click the lock to mark one as required '
+          '(presence: required) in the model.',
           style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                 color: Theme.of(context).hintColor,
               ),
@@ -202,23 +217,64 @@ class _SnapsPageState extends State<SnapsPage> {
           YaruSection(
             headline: Text('Snaps (${snaps.length})'),
             child: Column(
-              children: snaps
-                  .map((s) => YaruTile(
-                        leading: _typeChip(context, s.type),
-                        title: Text(s.name),
-                        subtitle: Text(
-                          'id: ${s.id}\nchannel: ${s.defaultChannel}',
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
-                        trailing: IconButton(
-                          icon: const Icon(Icons.delete_outline),
-                          onPressed: () => _removeSnap(s),
-                        ),
-                      ))
-                  .toList(),
+              children: snaps.map((s) => _buildSnapTile(context, s)).toList(),
             ),
           ),
       ],
+    );
+  }
+
+  Widget _buildSnapTile(BuildContext context, SnapEntry s) {
+    final isApp = s.type == SnapType.app;
+    final isRequired = s.presence == SnapPresence.required_;
+
+    final trailing = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (isApp)
+          IconButton(
+            icon: Icon(isRequired ? Icons.lock : Icons.lock_open),
+            tooltip: isRequired
+                ? 'Required (click to make optional)'
+                : 'Optional (click to make required)',
+            color: isRequired
+                ? Theme.of(context).colorScheme.primary
+                : Theme.of(context).hintColor,
+            onPressed: () => _togglePresence(s),
+          ),
+        IconButton(
+          icon: const Icon(Icons.delete_outline),
+          tooltip: 'Remove',
+          onPressed: () => _removeSnap(s),
+        ),
+      ],
+    );
+
+    final presenceLabel = isApp
+        ? (isRequired ? '  •  required' : '  •  optional')
+        : '';
+
+    return YaruTile(
+      leading: _typeChip(context, s.type),
+      title: Row(
+        children: [
+          Text(s.name),
+          if (presenceLabel.isNotEmpty)
+            Text(
+              presenceLabel,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: isRequired
+                        ? Theme.of(context).colorScheme.primary
+                        : Theme.of(context).hintColor,
+                  ),
+            ),
+        ],
+      ),
+      subtitle: Text(
+        'id: ${s.id}\nchannel: ${s.defaultChannel}',
+        style: Theme.of(context).textTheme.bodySmall,
+      ),
+      trailing: trailing,
     );
   }
 
