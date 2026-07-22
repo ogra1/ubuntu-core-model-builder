@@ -19,11 +19,13 @@ class ReviewPage extends StatefulWidget {
 
 class _ReviewPageState extends State<ReviewPage> {
   static const _prefAlsoSaveJson = 'review.alsoSaveJson';
+  static const _prefLastSaveDir = 'review.lastSaveDir';
 
   VerificationReport? _report;
   String? _savedPath;
   String? _jsonHeader; // the unsigned JSON that was signed
   bool _alsoSaveJson = false; // default unchecked; overridden by saved pref
+  String? _lastSaveDir; // remembered across sessions
 
   @override
   void initState() {
@@ -35,8 +37,12 @@ class _ReviewPageState extends State<ReviewPage> {
     try {
       final prefs = await SharedPreferences.getInstance();
       final saved = prefs.getBool(_prefAlsoSaveJson);
-      if (saved != null && mounted) {
-        setState(() => _alsoSaveJson = saved);
+      final dir = prefs.getString(_prefLastSaveDir);
+      if (mounted) {
+        setState(() {
+          if (saved != null) _alsoSaveJson = saved;
+          if (dir != null && dir.isNotEmpty) _lastSaveDir = dir;
+        });
       }
     } catch (_) {
       // If prefs are unavailable, keep the default (false).
@@ -51,6 +57,25 @@ class _ReviewPageState extends State<ReviewPage> {
     } catch (_) {
       // Non-fatal: the choice just won't persist this time.
     }
+  }
+
+  Future<void> _rememberSaveDir(String savedPath) async {
+    final dir = _dirOf(savedPath);
+    if (dir == null || dir.isEmpty) return;
+    _lastSaveDir = dir;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_prefLastSaveDir, dir);
+    } catch (_) {
+      // Non-fatal; the directory just won't persist this time.
+    }
+  }
+
+  /// Returns the directory portion of a file path, or null if none.
+  String? _dirOf(String path) {
+    final idx = path.lastIndexOf(RegExp(r'[/\\]'));
+    if (idx <= 0) return null;
+    return path.substring(0, idx);
   }
 
   Future<void> _sign() async {
@@ -98,6 +123,7 @@ class _ReviewPageState extends State<ReviewPage> {
     final suggested = '$modelName.model';
     final location = await getSaveLocation(
       suggestedName: suggested,
+      initialDirectory: _lastSaveDir,
       acceptedTypeGroups: [
         const XTypeGroup(label: 'Model assertion', extensions: ['model']),
       ],
@@ -107,6 +133,9 @@ class _ReviewPageState extends State<ReviewPage> {
     final svc = SnapcraftService();
     await svc.saveToFile(signed, location.path);
     setState(() => _savedPath = location.path);
+
+    // Remember the directory for next time.
+    await _rememberSaveDir(location.path);
 
     String? jsonPath;
     if (_alsoSaveJson && _jsonHeader != null) {
