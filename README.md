@@ -1,4 +1,4 @@
-# Ubuntu Core Model Builder
+# <img width="48" height="48" alt="icon" align="top" src="https://github.com/user-attachments/assets/bb795853-5e5b-4ab9-ab80-78ac52501f8f" /> Ubuntu Core Model Builder
 
 A Flutter desktop GUI for creating and signing Ubuntu Core model assertions.
 
