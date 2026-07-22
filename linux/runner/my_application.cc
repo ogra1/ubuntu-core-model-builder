@@ -14,9 +14,36 @@ struct _MyApplication {
 
 G_DEFINE_TYPE(MyApplication, my_application, GTK_TYPE_APPLICATION)
 
+// Stops the gpg-agent that snap uses for its keyring (~/.snap/gnupg) so it
+// does not linger after the application exits. Uses gpgconf --kill, the
+// supported way to terminate an agent for a specific GPG home. Best-effort:
+// failures (gpgconf missing, agent already stopped) are ignored. Runs
+// synchronously so it completes before the process tears down.
+static void stop_snap_gpg_agent() {
+  const gchar* home = g_getenv("HOME");
+  if (home == nullptr || home[0] == '\0') {
+    return;
+  }
+  gchar* cmd = g_strdup_printf(
+      "gpgconf --homedir '%s/.snap/gnupg' --kill gpg-agent", home);
+  g_spawn_command_line_sync(cmd, nullptr, nullptr, nullptr, nullptr);
+  g_free(cmd);
+}
+
 // Called when first Flutter frame received.
 static void first_frame_cb(MyApplication* self, FlView* view) {
   gtk_widget_show(gtk_widget_get_toplevel(GTK_WIDGET(view)));
+}
+
+// Runs when the main window is about to close (the X button). We stop the
+// snap gpg-agent here because the Flutter GTK embedder does not route the
+// window close through a Dart-catchable signal. Returning FALSE lets the
+// close proceed normally.
+static gboolean on_main_window_delete(GtkWidget* widget,
+                                      GdkEvent* event,
+                                      gpointer user_data) {
+  stop_snap_gpg_agent();
+  return FALSE;
 }
 
 // Implements GApplication::activate.
@@ -24,6 +51,10 @@ static void my_application_activate(GApplication* application) {
   MyApplication* self = MY_APPLICATION(application);
   GtkWindow* window =
       GTK_WINDOW(gtk_application_window_new(GTK_APPLICATION(application)));
+
+  // Clean up the snap gpg-agent when the window is closed via the X button.
+  g_signal_connect(window, "delete-event",
+                   G_CALLBACK(on_main_window_delete), nullptr);
 
   // Use a header bar when running in GNOME as this is the common style used
   // by applications and is the setup most users will be using (e.g. Ubuntu
@@ -71,6 +102,7 @@ static void my_application_activate(GApplication* application) {
   // Requires the view to be realized so we can start rendering.
   g_signal_connect_swapped(view, "first-frame", G_CALLBACK(first_frame_cb),
                            self);
+
   gtk_widget_realize(GTK_WIDGET(view));
 
   fl_register_plugins(FL_PLUGIN_REGISTRY(view));
@@ -95,7 +127,6 @@ static gboolean my_application_local_command_line(GApplication* application,
 
   g_application_activate(application);
   *exit_status = 0;
-
   return TRUE;
 }
 
@@ -112,7 +143,9 @@ static void my_application_startup(GApplication* application) {
 static void my_application_shutdown(GApplication* application) {
   // MyApplication* self = MY_APPLICATION(object);
 
-  // Perform any actions required at application shutdown.
+  // Also stop the snap gpg-agent on GApplication shutdown, covering exit
+  // paths other than the window delete-event.
+  stop_snap_gpg_agent();
 
   G_APPLICATION_CLASS(my_application_parent_class)->shutdown(application);
 }

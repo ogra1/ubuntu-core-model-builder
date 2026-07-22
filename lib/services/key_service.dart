@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:process_run/process_run.dart';
 
 import 'terminal_runner.dart';
@@ -138,7 +140,30 @@ class KeyService {
   }
 
   String _shellQuote(String s) => "'${s.replaceAll("'", "'\\''")}'";
+  /// Cleanly stops the gpg-agent that snap uses for its keyring
+  /// (~/.snap/gnupg), so it does not linger after the app exits.
+  ///
+  /// Uses `gpgconf --kill`, the supported way to terminate an agent for a
+  /// specific GPG home. Best-effort: failures are ignored.
+  static Future<void> stopSnapGpgAgent() async {
+    final home = _snapGnupgHome();
+    if (home == null) return;
+    try {
+      await Process.run('gpgconf', ['--homedir', home, '--kill', 'gpg-agent']);
+    } catch (_) {
+      // gpgconf not present or agent already gone; ignore.
+    }
+  }
+
+  static String? _snapGnupgHome() {
+    final env = Platform.environment;
+    final base = env['HOME'];
+    if (base == null || base.isEmpty) return null;
+    return '$base/.snap/gnupg';
+  }
 }
+
+
 
 class KeyException implements Exception {
   final String message;
