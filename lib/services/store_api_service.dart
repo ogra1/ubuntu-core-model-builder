@@ -114,14 +114,26 @@ class StoreApiService {
     }
 
     final sorted = channels.toList()..sort(_channelCompare);
-    final resolvedBase = baseStablePreferred ?? baseForArch;
+    var resolvedBase = baseStablePreferred ?? baseForArch;
+
+    final resolvedType = (snap['type'] ?? typeFromMap) as String?;
+    // A null base on an app snap means the original "core" base: it predates
+    // the base concept, so snaps built on it declare no base. Explicit bases
+    // like "bare", "core18", "core24" come through non-null and are used
+    // as-is. Non-app snaps (base/kernel/gadget/snapd) legitimately have a
+    // null base and must NOT be given a fabricated one (e.g. the "bare" and
+    // "coreXX" base snaps themselves report base: null).
+    if (resolvedBase == null &&
+        (resolvedType == null || resolvedType == 'app')) {
+      resolvedBase = 'core';
+    }
 
     return StoreSnap(
       name: (body['name'] ?? name) as String,
       snapId: (snap['snap-id'] ?? body['snap-id'] ?? '') as String,
       title: snap['title'] as String?,
       summary: snap['summary'] as String?,
-      type: (snap['type'] ?? typeFromMap) as String?,
+      type: resolvedType,
       base: resolvedBase,
       channels: sorted,
     );

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:yaru/yaru.dart';
 import '../models/model_assertion.dart';
 import '../models/snap_entry.dart';
+import '../services/assertion_builder.dart';
 import '../services/store_api_service.dart';
 import '../widgets/snap_search_field.dart';
 
@@ -149,7 +150,7 @@ class _SnapsPageState extends State<SnapsPage> {
                 duration: const Duration(seconds: 6),
                 content: Text(
                   'Added base snap "$appBase" automatically because '
-                  '"${entry.name}" is built on it. It is listed before the '
+                  '"${entry.name}" is built on it. It is placed before the '
                   'app so snapd processes it first during image build.',
                 ),
               ),
@@ -311,7 +312,9 @@ class _SnapsPageState extends State<SnapsPage> {
 
   @override
   Widget build(BuildContext context) {
-    final snaps = widget.model.snaps;
+    // Display snaps in the same canonical order the generated model
+    // file will use, so the on-screen list matches the output.
+    final snaps = AssertionBuilder.orderedSnaps(widget.model.snaps);
     return Stack(
       children: [
         ListView(

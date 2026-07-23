@@ -34,7 +34,14 @@ class AssertionBuilder {
     return const JsonEncoder.withIndent('  ').convert(buildHeader(model));
   }
 
-  static List<SnapEntry> _orderedSnaps(List<SnapEntry> snaps) {
+  static List<SnapEntry> _orderedSnaps(List<SnapEntry> snaps) =>
+      orderedSnaps(snaps);
+
+  /// Returns [snaps] in the canonical order used in the generated model
+  /// file: snapd, base(s), kernel, gadget, then apps; alphabetical within
+  /// each group. Exposed so the UI can display snaps in the same order the
+  /// signed assertion will contain them.
+  static List<SnapEntry> orderedSnaps(List<SnapEntry> snaps) {
     int rank(SnapType t) => switch (t) {
           SnapType.snapd => 0,
           SnapType.base => 1,
