@@ -103,7 +103,7 @@ class _HomePageState extends State<HomePage> {
       case WizardStep.account:
         return AccountPage(state: _state, onRetry: _bootstrap);
       case WizardStep.metadata:
-        return MetadataPage(model: _state.model, onChanged: _state.refresh);
+        return MetadataPage(state: _state, onChanged: _state.refresh);
       case WizardStep.snaps:
         return SnapsPage(model: _state.model, onChanged: _state.refresh);
       case WizardStep.keys:

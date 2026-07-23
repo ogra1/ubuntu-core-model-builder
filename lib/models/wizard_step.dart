@@ -66,6 +66,23 @@ class WizardState extends ChangeNotifier {
 
   void refresh() => notifyListeners();
 
+  /// Replaces the current model with an imported one. Resets signing state
+  /// (a fresh model must be re-signed) and any selected key stays as-is.
+  void importModel(ModelAssertion imported) {
+    model
+      ..type = imported.type
+      ..authorityId = imported.authorityId
+      ..brandId = imported.brandId
+      ..series = imported.series
+      ..model = imported.model
+      ..architecture = imported.architecture
+      ..base = imported.base
+      ..grade = imported.grade
+      ..snaps = imported.snaps;
+    signedAssertion = null; // imported model is unsigned / must be re-signed
+    notifyListeners();
+  }
+
   void setAccount(StoreAccount? acct) {
     account = acct;
     if (acct != null) {
