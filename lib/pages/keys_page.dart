@@ -1,7 +1,8 @@
-import '../theme/status_colors.dart';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:yaru/yaru.dart';
 
+import '../theme/status_colors.dart';
 import '../models/wizard_step.dart';
 import '../services/key_service.dart';
 
@@ -14,6 +15,8 @@ class KeysPage extends StatefulWidget {
 }
 
 class _KeysPageState extends State<KeysPage> {
+  static const _prefLastKeyName = 'keys.lastKeyName';
+
   final KeyService _keyService = KeyService();
 
   List<SigningKey> _keys = [];
@@ -38,13 +41,54 @@ class _KeysPageState extends State<KeysPage> {
 
       final selected = widget.state.selectedKeyName;
       if (selected != null && !keys.any((k) => k.name == selected)) {
+        // Previously selected key vanished.
         widget.state.selectedKeyName = null;
         widget.state.refresh();
+      }
+
+      // If nothing is selected yet, try to restore the remembered key.
+      if (widget.state.selectedKeyName == null) {
+        await _restoreRememberedKey(keys);
       }
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
     } finally {
       if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  /// Re-selects the remembered key if it still exists locally AND is
+  /// registered. Stale/invalid remembered keys are ignored.
+  Future<void> _restoreRememberedKey(List<SigningKey> keys) async {
+    String? remembered;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      remembered = prefs.getString(_prefLastKeyName);
+    } catch (_) {
+      return;
+    }
+    if (remembered == null || remembered.isEmpty) return;
+
+    SigningKey? match;
+    for (final k in keys) {
+      if (k.name == remembered) {
+        match = k;
+        break;
+      }
+    }
+    if (match != null && match.registered) {
+      widget.state.selectedKeyName = match.name;
+      widget.state.refresh();
+      if (mounted) setState(() {});
+    }
+  }
+
+  Future<void> _rememberKey(String name) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_prefLastKeyName, name);
+    } catch (_) {
+      // Non-fatal.
     }
   }
 
@@ -55,6 +99,7 @@ class _KeysPageState extends State<KeysPage> {
     }
     widget.state.selectedKeyName = key.name;
     widget.state.refresh();
+    _rememberKey(key.name);
     setState(() {});
   }
 
