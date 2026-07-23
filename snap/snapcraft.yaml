@@ -1,6 +1,6 @@
 name: ubuntu-core-model-builder
 title: Ubuntu Core Model Builder
-version: '0.1.4'
+version: '0.1.5'
 summary: GUI for creating and signing Ubuntu Core model assertions
 description: |
   A graphical tool to create, edit, and sign Ubuntu Core model
