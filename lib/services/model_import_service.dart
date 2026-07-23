@@ -102,12 +102,20 @@ class ModelImportService {
     for (final m in snapMaps) {
       final name = m['name'];
       if (name == null || name.isEmpty) continue;
+      final type = _parseType(m['type']);
+      // A base snap that is not the model's own base can only have gotten
+      // into the model because an app pulled it in. Mark such bases as
+      // autoAdded so the Snaps page auto-removes them when their last
+      // dependent app is removed, matching freshly built models.
+      final isDependentBase =
+          type == SnapType.base && name != model.base;
       entries.add(SnapEntry(
         name: name,
         id: m['id'] ?? '',
-        type: _parseType(m['type']),
+        type: type,
         defaultChannel: m['default-channel'] ?? 'latest/stable',
         presence: _parsePresence(m['presence']),
+        autoAdded: isDependentBase,
       ));
     }
 
