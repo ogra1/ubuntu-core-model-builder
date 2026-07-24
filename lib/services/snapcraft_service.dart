@@ -4,6 +4,7 @@ import 'dart:io';
 
 import '../models/model_assertion.dart';
 import 'assertion_builder.dart';
+import 'host_env.dart';
 
 class SignResult {
   final String signedAssertion;
@@ -25,7 +26,12 @@ class SnapcraftService {
 
     final Process process;
     try {
-      process = await Process.start('snap', ['sign', '-k', keyName]);
+      process = await Process.start(
+        'snap',
+        ['sign', '-k', keyName],
+        environment: HostEnv.sanitized,
+        includeParentEnvironment: false,
+      );
     } on ProcessException catch (e) {
       throw SignException(
         'Could not run "snap sign". Is snapd installed?\n${e.message}',

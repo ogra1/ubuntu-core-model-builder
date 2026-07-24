@@ -1,5 +1,7 @@
 import 'dart:io';
 import 'package:process_run/process_run.dart';
+
+import 'host_env.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'cancel_token.dart';
@@ -18,7 +20,7 @@ class StoreAccount {
 
 class StoreService {
   Future<StoreAccount?> getCurrentAccount() async {
-    final shell = Shell(throwOnError: false);
+    final shell = Shell(throwOnError: false, environment: HostEnv.sanitized, includeParentEnvironment: false);
     final result = await shell.run('snapcraft whoami');
     if (result.first.exitCode != 0) return null;
 
@@ -80,12 +82,16 @@ class StoreService {
         'setsid',
         [term.command, ...term.execArgs, 'sh', '-c', inner],
         mode: ProcessStartMode.normal,
+        environment: HostEnv.sanitized,
+        includeParentEnvironment: false,
       );
     } else {
       process = await Process.start(
         term.command,
         [...term.execArgs, 'sh', '-c', inner],
         mode: ProcessStartMode.normal,
+        environment: HostEnv.sanitized,
+        includeParentEnvironment: false,
       );
     }
 
@@ -104,7 +110,8 @@ class StoreService {
     try {
       // Negative pid signals the process group (works when started via
       // setsid). Try SIGTERM first, then SIGKILL.
-      final term = await Process.run('kill', ['-TERM', '-$pid']);
+      final term = await Process.run('kill', ['-TERM', '-\$pid'],
+          environment: HostEnv.sanitized, includeParentEnvironment: false);
       if (term.exitCode != 0) {
         // Fall back to killing just the process.
         process.kill(ProcessSignal.sigterm);
@@ -118,7 +125,8 @@ class StoreService {
     // Give it a moment, then force-kill the group if still around.
     await Future<void>.delayed(const Duration(milliseconds: 300));
     try {
-      await Process.run('kill', ['-KILL', '-$pid']);
+      await Process.run('kill', ['-KILL', '-\$pid'],
+          environment: HostEnv.sanitized, includeParentEnvironment: false);
     } catch (_) {
       try {
         process.kill(ProcessSignal.sigkill);
@@ -149,7 +157,7 @@ class StoreService {
   }
 
   Future<void> logout() async {
-    final shell = Shell(throwOnError: false);
+    final shell = Shell(throwOnError: false, environment: HostEnv.sanitized, includeParentEnvironment: false);
     await shell.run('snapcraft logout');
   }
 
@@ -167,12 +175,15 @@ class StoreService {
     try {
       await file.writeAsString(trimmed);
       try {
-        await Process.run('chmod', ['600', file.path]);
+        await Process.run('chmod', ['600', file.path],
+            environment: HostEnv.sanitized, includeParentEnvironment: false);
       } catch (_) {}
 
       final result = await Process.run(
         'snapcraft',
         ['login', '--with', file.path],
+        environment: HostEnv.sanitized,
+        includeParentEnvironment: false,
       );
 
       if (result.exitCode != 0) {
@@ -192,7 +203,7 @@ class StoreService {
   }
 
   Future<String?> _which(String cmd) async {
-    final shell = Shell(throwOnError: false);
+    final shell = Shell(throwOnError: false, environment: HostEnv.sanitized, includeParentEnvironment: false);
     final r = await shell.run('which $cmd');
     if (r.first.exitCode != 0) return null;
     final out = r.outText.trim();

@@ -2,6 +2,8 @@ import 'dart:io';
 
 import 'package:process_run/process_run.dart';
 
+import 'host_env.dart';
+
 import 'terminal_runner.dart';
 
 class SigningKey {
@@ -23,7 +25,7 @@ class SigningKey {
 }
 
 class KeyService {
-  final _shell = Shell(throwOnError: false);
+  final _shell = Shell(throwOnError: false, environment: HostEnv.sanitized, includeParentEnvironment: false);
 
   Future<List<SigningKey>> listKeys() async {
     final local = await _listLocalKeys();

@@ -1,5 +1,7 @@
 import 'package:process_run/process_run.dart';
 
+import 'host_env.dart';
+
 class ToolStatus {
   final bool hasSnap;
   final bool hasSnapcraft;
@@ -20,7 +22,7 @@ class ToolStatus {
 
 class ToolLocator {
   static Future<ToolStatus> check() async {
-    final shell = Shell(throwOnError: false);
+    final shell = Shell(throwOnError: false, environment: HostEnv.sanitized, includeParentEnvironment: false);
 
     Future<String?> which(String tool) async {
       final r = await shell.run('which $tool');
@@ -45,7 +47,7 @@ class ToolLocator {
   }
 
   static Future<void> installSnapcraft() async {
-    final shell = Shell(throwOnError: false);
+    final shell = Shell(throwOnError: false, environment: HostEnv.sanitized, includeParentEnvironment: false);
     await shell.run('snap install snapcraft --classic');
   }
 }

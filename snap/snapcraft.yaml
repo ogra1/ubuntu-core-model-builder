@@ -22,65 +22,99 @@ apps:
       PATH: $SNAP/bin:$SNAP/usr/bin:$PATH
       LD_LIBRARY_PATH: $SNAP/bin/lib:$SNAP/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR:$LD_LIBRARY_PATH
       GDK_BACKEND: x11
+      LIBGL_DRIVERS_PATH: $SNAP/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/dri
       GTK_PATH: $SNAP/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/gtk-3.0
       GIO_MODULE_DIR: $SNAP/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/gio/modules
 
 parts:
-  model-builder:
-    plugin: flutter
+  flutter-git:
+    plugin: nil
     source: .
-    flutter-target: lib/main.dart
+    source-type: git
+    override-pull: |
+      # necessary when reruns using the same container
+      if [ -d "flutter" ]; then
+        rm -rf "flutter"
+      fi
+
+      craftctl default
+
+      FLUTTER_VERSION=3.44.0
+      git clone -b ${FLUTTER_VERSION} --depth 1 https://github.com/flutter/flutter.git
+    override-build: |
+      if [ $CRAFT_ARCH_BUILD_FOR = riscv64 ]; then
+        export FLUTTER_STORAGE_BASE_URL=https://flutter-experimental.ubuntu.com
+      fi
+
+      mkdir -p $CRAFT_PART_INSTALL/usr/bin
+      mkdir -p $CRAFT_PART_INSTALL/usr/libexec
+      cp -r $CRAFT_PART_SRC/flutter $CRAFT_PART_INSTALL/usr/libexec/flutter
+      ln -s $CRAFT_PART_INSTALL/usr/libexec/flutter/bin/flutter $CRAFT_PART_INSTALL/usr/bin/flutter
+      ln -s $CRAFT_PART_INSTALL/usr/libexec/flutter/bin/dart $CRAFT_PART_INSTALL/usr/bin/dart
+      $CRAFT_PART_INSTALL/usr/bin/flutter doctor
     build-packages:
       - clang
       - cmake
-      - ninja-build
-      - pkg-config
+      - curl
       - libgtk-3-dev
+      - ninja-build
+      - unzip
+      - xz-utils
+      - zip
+    override-prime: ""
+  model-builder:
+    after: [flutter-git]
+    plugin: nil
+    source: .
+    build-attributes: [enable-patchelf]
+    override-build: |
+      set -eux
+      mkdir -p $CRAFT_PART_INSTALL/bin
+      git submodule update --init --recursive
+
+      flutter pub get
+      flutter build linux --release -v
+      cp -r build/linux/*/release/bundle/* $CRAFT_PART_INSTALL/bin/
+  libraries:
+    plugin: nil
+    build-attributes: [enable-patchelf]
     stage-packages:
+      - libatk1.0-0t64
+      - libcairo-gobject2
+      - libcairo2
+      - libegl-mesa0
       - libegl1
+      - libelf1t64
+      - libgl1
       - libgles2
-      - libglvnd0
-      - libdrm2
-      - libgbm1
-      - libgtk-3-0
-      - libglib2.0-0
-      - libgdk-pixbuf-2.0-0
+      - libglib2.0-0t64
+      - libglib2.0-dev
+      - libgirepository-1.0-1
+      - libgtk-3-0t64
       - libpango-1.0-0
       - libpangocairo-1.0-0
-      - libcairo2
-      - libcairo-gobject2
-      - libharfbuzz0b
-      - libatk1.0-0
-      - libatk-bridge2.0-0
-      - libepoxy0
-      - libfontconfig1
-      - libfreetype6
+      - libpng16-16t64
+      - libwayland-egl1
       - libx11-6
-      - libxcomposite1
-      - libxcursor1
-      - libxdamage1
-      - libxext6
-      - libxfixes3
-      - libxi6
-      - libxinerama1
-      - libxrandr2
-      - libxrender1
-      - librsvg2-common
-      - libgdk-pixbuf2.0-bin
-    override-build: |
-      craftctl default
-      set -eux
-      # Locate the built Flutter Linux bundle within the part.
-      # The bundle contains the executable + lib/ + data/ subdirs.
-      bundle="$(find "$CRAFT_PART_BUILD" -type d \
-        -path '*/build/linux/*/release/bundle' | head -n1)"
-      if [ -z "$bundle" ]; then
-        echo "ERROR: could not find Flutter release bundle" >&2
-        find "$CRAFT_PART_BUILD" -name 'ubuntu_core_model_builder' -type f >&2 || true
-        exit 1
-      fi
-      echo "Found bundle: $bundle"
-      mkdir -p "$CRAFT_PART_INSTALL/bin"
-      cp -r "$bundle"/* "$CRAFT_PART_INSTALL/bin/"
-      # Sanity: the executable should now exist.
-      test -f "$CRAFT_PART_INSTALL/bin/ubuntu_core_model_builder"
+      - libdatrie1
+      - libdrm2
+      - libgbm1
+      - libglapi-mesa
+      - libgraphite2-3
+      - libxshmfence1
+      - libpciaccess0
+      - libvulkan1
+      - shared-mime-info
+      - libglib2.0-bin
+      - libibus-1.0-5
+  dri-no-patchelf:
+    after: [libraries]
+    plugin: nil
+    stage-packages:
+      - libgl1-mesa-dri
+    build-attributes:
+      - no-patchelf # Otherwise snapcraft may strip the build ID and cause the driver to crash
+    stage:
+      - usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/dri
+      - usr/share/drirc.d
+      - usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libgallium*

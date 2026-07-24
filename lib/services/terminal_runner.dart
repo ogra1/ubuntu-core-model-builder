@@ -1,16 +1,11 @@
 import 'dart:io';
 import 'package:process_run/process_run.dart';
 
+import 'host_env.dart';
+
 /// Runs a shell command inside a terminal emulator so interactive prompts
 /// (passphrases, 2FA) have a real tty. Shared by login and key operations.
 class TerminalRunner {
-  /// Launches [command] (a shell snippet) in a terminal. Returns the
-  /// [Process] handle. Uses setsid where available so the whole group can
-  /// be signalled. Throws [NoTerminalException] if no emulator is found.
-  ///
-  /// When [wait] is true, terminals that support it (gnome-terminal, ptyxis)
-  /// are told to block until the inner command exits, so the returned
-  /// Process exit reflects completion instead of returning early.
   static Future<Process> run(String command, {bool wait = false}) async {
     final term = await _findTerminal();
     if (term == null) throw NoTerminalException();
@@ -25,23 +20,26 @@ class TerminalRunner {
     ];
 
     final hasSetsid = await _which('setsid') != null;
+    final env = HostEnv.sanitized;
 
     if (hasSetsid) {
       return Process.start(
         'setsid',
         [term.command, ...launchArgs],
         mode: ProcessStartMode.normal,
+        environment: env,
+        includeParentEnvironment: false,
       );
     }
     return Process.start(
       term.command,
       launchArgs,
       mode: ProcessStartMode.normal,
+      environment: env,
+      includeParentEnvironment: false,
     );
   }
 
-  /// Runs [command] in a terminal and completes when it exits. Passes
-  /// [wait] through so gnome-terminal/ptyxis block properly.
   static Future<int> runToCompletion(
     String command, {
     bool wait = true,
@@ -53,22 +51,23 @@ class TerminalRunner {
   }
 
   static Future<String?> _which(String cmd) async {
-    final shell = Shell(throwOnError: false);
-    final r = await shell.run('which $cmd');
-    if (r.first.exitCode != 0) return null;
-    final out = r.outText.trim();
+    // `which` itself is a host binary; run it with a sanitized environment.
+    final r = await Process.run(
+      'which',
+      [cmd],
+      environment: HostEnv.sanitized,
+      includeParentEnvironment: false,
+    );
+    if (r.exitCode != 0) return null;
+    final out = (r.stdout as String).trim();
     return out.isEmpty ? null : out;
   }
 
   static Future<_Term?> _findTerminal() async {
     Future<bool> exists(String c) async => (await _which(c)) != null;
-    // waitArgs: flags that make the launcher block until the child exits.
-    // execArgs: flag that means "run this command".
-    // Order matters: waitArgs come before execArgs on the command line.
     final candidates = <_Term>[
       _Term('gnome-terminal', execArgs: ['--'], waitArgs: ['--wait']),
       _Term('ptyxis', execArgs: ['--'], waitArgs: ['--wait']),
-      // konsole blocks by default when using -e.
       _Term('konsole', execArgs: ['-e']),
       _Term('tilix', execArgs: ['-e']),
       _Term('xfce4-terminal', execArgs: ['-x']),

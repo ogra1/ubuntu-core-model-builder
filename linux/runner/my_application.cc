@@ -24,7 +24,11 @@ static void stop_snap_gpg_agent() {
   if (home == nullptr || home[0] == '\0') {
     return;
   }
+  // Unset the snap's bundled library env vars so the host gpgconf/gpg-agent
+  // load host libraries, not our patchelf'd bundle.
   gchar* cmd = g_strdup_printf(
+      "env -u LD_LIBRARY_PATH -u GTK_PATH -u GIO_MODULE_DIR "
+      "-u LIBGL_DRIVERS_PATH -u GDK_BACKEND -u LD_PRELOAD "
       "gpgconf --homedir '%s/.snap/gnupg' --kill gpg-agent", home);
   g_spawn_command_line_sync(cmd, nullptr, nullptr, nullptr, nullptr);
   g_free(cmd);

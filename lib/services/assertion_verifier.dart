@@ -2,6 +2,7 @@ import 'dart:io';
 
 import '../models/model_assertion.dart';
 import 'assertion_parser.dart';
+import 'host_env.dart';
 import 'key_service.dart';
 
 enum CheckStatus { pass, warn, fail }
@@ -157,7 +158,12 @@ class AssertionVerifier {
   }
 
   Future<VerificationCheck> verifyViaSnapAck(String assertionFilePath) async {
-    final result = await Process.run('snap', ['ack', assertionFilePath]);
+    final result = await Process.run(
+      'snap',
+      ['ack', assertionFilePath],
+      environment: HostEnv.sanitized,
+      includeParentEnvironment: false,
+    );
     if (result.exitCode == 0) {
       return VerificationCheck(
         'snapd acknowledgement',
