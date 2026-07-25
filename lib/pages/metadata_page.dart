@@ -6,8 +6,9 @@ import 'package:yaru/yaru.dart';
 import '../models/model_assertion.dart';
 import '../models/wizard_step.dart';
 import '../services/model_import_service.dart';
+import '../services/surl_service.dart';
 
-class MetadataPage extends StatelessWidget {
+class MetadataPage extends StatefulWidget {
   final WizardState state;
   final VoidCallback onChanged;
   const MetadataPage({
@@ -16,12 +17,83 @@ class MetadataPage extends StatelessWidget {
     required this.onChanged,
   });
 
-  static const _prefLastImportDir = 'metadata.lastImportDir';
+  @override
+  State<MetadataPage> createState() => _MetadataPageState();
+}
 
+class _MetadataPageState extends State<MetadataPage> {
+  static const _prefLastImportDir = 'metadata.lastImportDir';
+  static const _prefRecentStores = 'metadata.recentStores';
+
+  final _nameController = TextEditingController();
+  final _storeController = TextEditingController();
+  final _storeFocus = FocusNode();
+
+  List<String> _recentStores = [];
+
+  WizardState get state => widget.state;
   ModelAssertion get model => state.model;
 
+  @override
+  void initState() {
+    super.initState();
+    _nameController.text = model.model ?? '';
+    _storeController.text = model.store ?? '';
+    _loadRecentStores();
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _storeController.dispose();
+    _storeFocus.dispose();
+    super.dispose();
+  }
+
+  void _syncControllersFromModel() {
+    final wantName = model.model ?? '';
+    if (_nameController.text != wantName) {
+      _nameController.text = wantName;
+      _nameController.selection =
+          TextSelection.collapsed(offset: _nameController.text.length);
+    }
+    final wantStore = model.store ?? '';
+    if (_storeController.text != wantStore) {
+      _storeController.text = wantStore;
+      _storeController.selection =
+          TextSelection.collapsed(offset: _storeController.text.length);
+    }
+  }
+
+  Future<void> _loadRecentStores() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final list = prefs.getStringList(_prefRecentStores);
+      if (list != null && mounted) {
+        setState(() => _recentStores = list);
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _rememberStore(String store) async {
+    final v = store.trim();
+    if (v.isEmpty) return;
+    final updated = <String>[
+      v,
+      ..._recentStores.where((s) => s != v),
+    ].take(10).toList();
+    setState(() => _recentStores = updated);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList(_prefRecentStores, updated);
+    } catch (_) {}
+  }
+
+  // ---------------------------------------------------------------------------
+  // Import
+  // ---------------------------------------------------------------------------
+
   Future<void> _import(BuildContext context) async {
-    // Confirm if there is existing data to replace.
     final hasData = model.model != null || model.snaps.isNotEmpty;
     if (hasData) {
       final ok = await showDialog<bool>(
@@ -45,7 +117,6 @@ class MetadataPage extends StatelessWidget {
       if (ok != true) return;
     }
 
-    // Open the picker at the last-used import directory, if any.
     final lastDir = await _loadLastImportDir();
     final file = await openFile(
       initialDirectory: lastDir,
@@ -58,7 +129,6 @@ class MetadataPage extends StatelessWidget {
     );
     if (file == null) return;
 
-    // Remember the directory for next time.
     await _rememberImportDir(file.path);
 
     state.setBusy(true, message: 'Importing model...');
@@ -67,7 +137,11 @@ class MetadataPage extends StatelessWidget {
           .importFromFile(file.path, reResolveAppBase: true);
 
       state.importModel(result.model);
-      onChanged();
+      _syncControllersFromModel();
+      if (model.store != null && model.store!.trim().isNotEmpty) {
+        await _rememberStore(model.store!);
+      }
+      widget.onChanged();
 
       final account = state.account;
       final mismatch = account != null &&
@@ -99,8 +173,6 @@ class MetadataPage extends StatelessWidget {
     }
   }
 
-  /// Shows import warnings and, on a brand-id mismatch, offers to replace the
-  /// imported brand-id with the signed-in account so signing will succeed.
   Future<void> _showImportNotes(
     BuildContext context, {
     required List<String> warnings,
@@ -155,10 +227,9 @@ class MetadataPage extends StatelessWidget {
     );
 
     if (replace == true && accountId != null) {
-      // Overwrite brand-id AND authority-id with the current account, which
-      // is what setAccount does (self-signed model: authority == brand).
       state.setAccount(state.account);
-      onChanged();
+      widget.onChanged();
+      setState(() {});
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -186,9 +257,7 @@ class MetadataPage extends StatelessWidget {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_prefLastImportDir, dir);
-    } catch (_) {
-      // Non-fatal.
-    }
+    } catch (_) {}
   }
 
   String? _dirOf(String path) {
@@ -196,6 +265,88 @@ class MetadataPage extends StatelessWidget {
     if (idx <= 0) return null;
     return path.substring(0, idx);
   }
+
+  // ---------------------------------------------------------------------------
+  // Store fetch / picker
+  // ---------------------------------------------------------------------------
+
+  Future<void> _fetchStores(BuildContext context) async {
+    final surl = SurlService();
+    state.setBusy(true, message: 'Fetching your stores...');
+    try {
+      List<BrandStore> stores;
+      try {
+        stores = await surl.listStores();
+      } on SurlAuthException {
+        // Not authenticated: run web-login in the browser, then retry once.
+        state.setBusy(true, message: 'Opening login in your browser...');
+        await surl.webLogin();
+        state.setBusy(true, message: 'Fetching your stores...');
+        stores = await surl.listStores();
+      }
+      if (!context.mounted) return;
+      await _showStorePicker(context, stores);
+    } on SurlUnavailableException catch (e) {
+      _error(context,
+          'Store lookup is unavailable: $e. You can type a store ID manually.');
+    } on SurlAuthException catch (e) {
+      _error(context, 'Store login failed: $e');
+    } catch (e) {
+      _error(context, 'Could not fetch stores: $e');
+    } finally {
+      state.busy = false;
+    }
+  }
+
+  Future<void> _showStorePicker(
+      BuildContext context, List<BrandStore> stores) async {
+    final sorted = [...stores]..sort((a, b) {
+        if (a.isGlobal != b.isGlobal) return a.isGlobal ? -1 : 1;
+        final an = (a.name ?? a.id).toLowerCase();
+        final bn = (b.name ?? b.id).toLowerCase();
+        return an.compareTo(bn);
+      });
+
+    final selected = await showDialog<BrandStore>(
+      context: context,
+      builder: (_) => SimpleDialog(
+        title: const Text('Select a store'),
+        children: [
+          for (final st in sorted)
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, st),
+              child: ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(st.isGlobal
+                    ? 'Global store (no store ID)'
+                    : (st.name ?? st.id)),
+                subtitle: st.isGlobal
+                    ? const Text('Standard Ubuntu store')
+                    : Text('${st.id}'
+                        '${st.roles.isNotEmpty ? "  •  ${st.roles.join(", ")}" : ""}'),
+              ),
+            ),
+        ],
+      ),
+    );
+
+    if (selected == null) return;
+
+    if (selected.isGlobal) {
+      model.store = null;
+      _storeController.text = '';
+    } else {
+      model.store = selected.id;
+      _storeController.text = selected.id;
+      await _rememberStore(selected.id);
+    }
+    widget.onChanged();
+    setState(() {});
+  }
+
+  // ---------------------------------------------------------------------------
+  // Misc
+  // ---------------------------------------------------------------------------
 
   void _error(BuildContext context, String msg) {
     if (!context.mounted) return;
@@ -207,6 +358,10 @@ class MetadataPage extends StatelessWidget {
       ),
     );
   }
+
+  // ---------------------------------------------------------------------------
+  // Build
+  // ---------------------------------------------------------------------------
 
   @override
   Widget build(BuildContext context) {
@@ -232,22 +387,23 @@ class MetadataPage extends StatelessWidget {
             padding: const EdgeInsets.all(16),
             child: Column(
               children: [
-                TextFormField(
-                  key: ValueKey('model-${model.model}'),
-                  initialValue: model.model,
+                TextField(
+                  controller: _nameController,
                   decoration: const InputDecoration(
                     labelText: 'Model name',
                     helperText: 'Lowercase, alphanumeric and dashes',
                   ),
                   onChanged: (v) {
                     model.model = v;
-                    onChanged();
+                    widget.onChanged();
                   },
                 ),
                 const SizedBox(height: 16),
-                TextFormField(
+                TextField(
                   key: ValueKey('brand-${model.brandId}'),
-                  initialValue: model.brandId ?? 'Not signed in',
+                  controller: TextEditingController(
+                    text: model.brandId ?? 'Not signed in',
+                  ),
                   readOnly: true,
                   decoration: const InputDecoration(
                     labelText: 'Brand ID (auto)',
@@ -274,7 +430,7 @@ class MetadataPage extends StatelessWidget {
                       .toList(),
                   onChanged: (v) {
                     if (v != null) model.architecture = v;
-                    onChanged();
+                    widget.onChanged();
                   },
                 ),
                 const SizedBox(height: 16),
@@ -289,8 +445,24 @@ class MetadataPage extends StatelessWidget {
                       .toList(),
                   onChanged: (v) {
                     model.base = v;
-                    onChanged();
+                    widget.onChanged();
                   },
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(child: _buildStoreField(context)),
+                    const SizedBox(width: 12),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: OutlinedButton.icon(
+                        onPressed: () => _fetchStores(context),
+                        icon: const Icon(Icons.cloud_download_outlined),
+                        label: const Text('Fetch my stores'),
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -308,12 +480,67 @@ class MetadataPage extends StatelessWidget {
               selected: {model.grade},
               onSelectionChanged: (selection) {
                 model.grade = selection.first;
-                onChanged();
+                widget.onChanged();
               },
             ),
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildStoreField(BuildContext context) {
+    return RawAutocomplete<String>(
+      textEditingController: _storeController,
+      focusNode: _storeFocus,
+      optionsBuilder: (value) {
+        final q = value.text.trim();
+        if (_recentStores.isEmpty) return const Iterable<String>.empty();
+        if (q.isEmpty) return _recentStores;
+        return _recentStores
+            .where((s) => s.toLowerCase().contains(q.toLowerCase()));
+      },
+      onSelected: (sel) {
+        _storeController.text = sel;
+        model.store = sel.trim().isEmpty ? null : sel.trim();
+        widget.onChanged();
+      },
+      fieldViewBuilder: (context, controller, focusNode, onSubmit) {
+        return TextField(
+          controller: controller,
+          focusNode: focusNode,
+          decoration: const InputDecoration(
+            labelText: 'Store ID (optional)',
+            helperText: 'Brand store ID; leave blank for the global store',
+          ),
+          onChanged: (v) {
+            model.store = v.trim().isEmpty ? null : v.trim();
+            widget.onChanged();
+          },
+        );
+      },
+      optionsViewBuilder: (context, onSelected, options) {
+        return Align(
+          alignment: Alignment.topLeft,
+          child: Material(
+            elevation: 4,
+            child: SizedBox(
+              width: 400,
+              child: ListView(
+                shrinkWrap: true,
+                padding: EdgeInsets.zero,
+                children: options
+                    .map((o) => ListTile(
+                          dense: true,
+                          title: Text(o),
+                          onTap: () => onSelected(o),
+                        ))
+                    .toList(),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }

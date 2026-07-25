@@ -13,6 +13,7 @@ class ModelAssertion {
   ModelArchitecture architecture = ModelArchitecture.amd64;
   String? base;
   ModelGrade grade = ModelGrade.signed;
+  String? store; // optional brand store ID; null/empty => global store
   List<SnapEntry> snaps = [];
   DateTime timestamp = DateTime.now().toUtc();
 
@@ -26,6 +27,7 @@ class ModelAssertion {
       'architecture': architecture.name,
       'base': base,
       'grade': grade.name,
+      'store': store,
       'snaps': snaps.map((s) => s.toMap()).toList(),
       'timestamp': timestamp.toIso8601String(),
     };

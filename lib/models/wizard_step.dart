@@ -78,6 +78,7 @@ class WizardState extends ChangeNotifier {
       ..architecture = imported.architecture
       ..base = imported.base
       ..grade = imported.grade
+      ..store = imported.store
       ..snaps = imported.snaps;
     signedAssertion = null; // imported model is unsigned / must be re-signed
     notifyListeners();

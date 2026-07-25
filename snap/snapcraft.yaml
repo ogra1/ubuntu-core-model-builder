@@ -118,3 +118,32 @@ parts:
       - usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/dri
       - usr/share/drirc.d
       - usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libgallium*
+  surl:
+    plugin: nil
+    source: https://github.com/canonical/surl.git
+    source-type: git
+    source-commit: 3e83328161f0d79ecdb15a6a0a3bcde8f5ab41cb
+    build-attributes:
+      - no-patchelf        # protect PyNaCl/cffi compiled .so files
+    build-packages:
+      - python3
+      - python3-venv
+      - python3-pip
+      - git
+      - build-essential
+      - libffi-dev
+    override-build: |
+      set -eux
+      venv="$CRAFT_PART_INSTALL/usr/share/surl-venv"
+      python3 -m venv "$venv"
+      "$venv/bin/pip" install --upgrade pip
+      "$venv/bin/pip" install -r "$CRAFT_PART_SRC/requirements.txt"
+      "$venv/bin/pip" install "$CRAFT_PART_SRC"
+      test -f "$venv/bin/surl_cli.py"
+    stage-packages:
+      - python3.12-minimal
+      - libpython3.12-minimal
+      - libpython3.12-stdlib
+      - ca-certificates
+      - libffi8
+      - libssl3

@@ -21,6 +21,11 @@ class AssertionBuilder {
 
     header['grade'] = model.grade.name;
 
+    final store = model.store?.trim();
+    if (store != null && store.isNotEmpty) {
+      header['store'] = store;
+    }
+
     header['snaps'] =
         _orderedSnaps(model.snaps).map(_snapToMap).toList(growable: false);
 
