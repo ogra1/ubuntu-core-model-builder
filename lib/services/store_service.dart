@@ -1,10 +1,9 @@
 import 'dart:io';
 import 'package:process_run/process_run.dart';
-
-import 'host_env.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'cancel_token.dart';
+import 'host_env.dart';
 
 class StoreAccount {
   final String email;
@@ -18,9 +17,35 @@ class StoreAccount {
   });
 }
 
+/// Handle for an in-progress terminal login. Call [cancel] to signal the
+/// inner shell (via a sentinel file) to kill the login and close the window.
+class LoginSession {
+  final String sentinelPath;
+  LoginSession(this.sentinelPath);
+
+  /// Signals cancellation by creating the sentinel file the inner shell polls.
+  Future<void> cancel() async {
+    try {
+      await File(sentinelPath).create(recursive: true);
+    } catch (_) {}
+  }
+
+  /// Cleans up the sentinel file (call after login completes or is cancelled).
+  Future<void> dispose() async {
+    try {
+      final f = File(sentinelPath);
+      if (await f.exists()) await f.delete();
+    } catch (_) {}
+  }
+}
+
 class StoreService {
   Future<StoreAccount?> getCurrentAccount() async {
-    final shell = Shell(throwOnError: false, environment: HostEnv.sanitized, includeParentEnvironment: false);
+    final shell = Shell(
+        throwOnError: false,
+		verbose: false,
+        environment: HostEnv.sanitized,
+        includeParentEnvironment: false);
     final result = await shell.run('snapcraft whoami');
     if (result.first.exitCode != 0) return null;
 
@@ -53,85 +78,70 @@ class StoreService {
 
   Future<bool> isLoggedIn() async => (await getCurrentAccount()) != null;
 
-  /// Launches `snapcraft login` inside a terminal emulator and returns the
-  /// terminal [Process] so the caller can [Process.kill] it on cancel.
+  /// Launches `snapcraft login` in a terminal, using a sentinel-file cancel
+  /// mechanism that works across all terminals. Returns a [LoginSession];
+  /// the caller polls whoami for success and can call session.cancel().
   ///
-  /// Uses a new session (setsid) so we can signal the whole process group,
-  /// killing the terminal AND the snapcraft child inside it.
+  /// On success the window auto-closes immediately (the app confirms login
+  /// via whoami polling). On cancel the inner shell kills snapcraft login
+  /// and exits, closing the window.
   ///
-  /// Throws [NoTerminalException] if no known terminal emulator is found.
-  Future<Process> loginInTerminal() async {
+  /// Throws [NoTerminalException] if no terminal emulator is found.
+  Future<LoginSession> loginInTerminal() async {
     final term = await _findTerminal();
-    if (term == null) {
-      throw NoTerminalException();
-    }
+    if (term == null) throw NoTerminalException();
 
-    const inner = 'snapcraft login; '
-        'echo; '
-        'echo "You may close this window."; '
-        'read -n 1 -s -r -p "Press any key to close..."';
+    // Unique sentinel path in a temp dir.
+    final dir = await getTemporaryDirectory();
+    final sentinel =
+        '${dir.path}/uc-login-cancel-${DateTime.now().millisecondsSinceEpoch}';
+    // Make sure a stale sentinel isn't present.
+    try {
+      final f = File(sentinel);
+      if (await f.exists()) await f.delete();
+    } catch (_) {}
 
-    // Prefix with `setsid` so the terminal starts its own process group,
-    // letting us kill the whole group later. Fall back gracefully if
-    // setsid is unavailable.
+    // Inner shell: run snapcraft login in the background; poll for either its
+    // completion (exit immediately -> window closes) or the cancel sentinel
+    // (kill it and exit). No trailing "press any key" so success auto-closes.
+    final inner = '''
+# Background watcher: kill the whole script group when the sentinel appears.
+(
+  while [ ! -f "$sentinel" ]; do sleep 0.3; done
+  kill 0 2>/dev/null
+) &
+WATCHER=\$!
+
+# Foreground interactive login (owns the tty so it can prompt).
+snapcraft login
+
+# Login returned on its own; stop the watcher and close the window.
+kill "\$WATCHER" 2>/dev/null
+exit 0
+''';
+
+    final env = HostEnv.sanitized;
     final hasSetsid = await _which('setsid') != null;
 
-    final Process process;
     if (hasSetsid) {
-      process = await Process.start(
+      await Process.start(
         'setsid',
-        [term.command, ...term.execArgs, 'sh', '-c', inner],
-        mode: ProcessStartMode.normal,
-        environment: HostEnv.sanitized,
+        [term.command, ...term.waitArgs, ...term.execArgs, 'sh', '-c', inner],
+        mode: ProcessStartMode.detached,
+        environment: env,
         includeParentEnvironment: false,
       );
     } else {
-      process = await Process.start(
+      await Process.start(
         term.command,
-        [...term.execArgs, 'sh', '-c', inner],
-        mode: ProcessStartMode.normal,
-        environment: HostEnv.sanitized,
+        [...term.waitArgs, ...term.execArgs, 'sh', '-c', inner],
+        mode: ProcessStartMode.detached,
+        environment: env,
         includeParentEnvironment: false,
       );
     }
 
-    // Drain stdio to avoid the pipe filling up (terminal emulators are
-    // usually quiet, but be safe).
-    process.stdout.drain<void>();
-    process.stderr.drain<void>();
-
-    return process;
-  }
-
-  /// Kills a terminal process launched by [loginInTerminal], attempting to
-  /// take down its whole process group (so snapcraft inside dies too).
-  Future<void> killTerminal(Process process) async {
-    final pid = process.pid;
-    try {
-      // Negative pid signals the process group (works when started via
-      // setsid). Try SIGTERM first, then SIGKILL.
-      final term = await Process.run('kill', ['-TERM', '-\$pid'],
-          environment: HostEnv.sanitized, includeParentEnvironment: false);
-      if (term.exitCode != 0) {
-        // Fall back to killing just the process.
-        process.kill(ProcessSignal.sigterm);
-      }
-    } catch (_) {
-      try {
-        process.kill(ProcessSignal.sigterm);
-      } catch (_) {}
-    }
-
-    // Give it a moment, then force-kill the group if still around.
-    await Future<void>.delayed(const Duration(milliseconds: 300));
-    try {
-      await Process.run('kill', ['-KILL', '-\$pid'],
-          environment: HostEnv.sanitized, includeParentEnvironment: false);
-    } catch (_) {
-      try {
-        process.kill(ProcessSignal.sigkill);
-      } catch (_) {}
-    }
+    return LoginSession(sentinel);
   }
 
   Future<StoreAccount?> waitForLogin({
@@ -157,7 +167,10 @@ class StoreService {
   }
 
   Future<void> logout() async {
-    final shell = Shell(throwOnError: false, environment: HostEnv.sanitized, includeParentEnvironment: false);
+    final shell = Shell(
+        throwOnError: false,
+        environment: HostEnv.sanitized,
+        includeParentEnvironment: false);
     await shell.run('snapcraft logout');
   }
 
@@ -203,10 +216,10 @@ class StoreService {
   }
 
   Future<String?> _which(String cmd) async {
-    final shell = Shell(throwOnError: false, environment: HostEnv.sanitized, includeParentEnvironment: false);
-    final r = await shell.run('which $cmd');
-    if (r.first.exitCode != 0) return null;
-    final out = r.outText.trim();
+    final r = await Process.run('which', [cmd],
+        environment: HostEnv.sanitized, includeParentEnvironment: false);
+    if (r.exitCode != 0) return null;
+    final out = (r.stdout as String).trim();
     return out.isEmpty ? null : out;
   }
 
@@ -214,14 +227,14 @@ class StoreService {
     Future<bool> exists(String cmd) async => (await _which(cmd)) != null;
 
     final candidates = <_Terminal>[
-      _Terminal('gnome-terminal', ['--']),
-      _Terminal('ptyxis', ['--']),
-      _Terminal('konsole', ['-e']),
-      _Terminal('tilix', ['-e']),
-      _Terminal('xfce4-terminal', ['-x']),
-      _Terminal('alacritty', ['-e']),
-      _Terminal('kitty', <String>[]),
-      _Terminal('xterm', ['-e']),
+      _Terminal('gnome-terminal', execArgs: ['--'], waitArgs: ['--wait']),
+      _Terminal('ptyxis', execArgs: ['--'], waitArgs: ['--wait']),
+      _Terminal('konsole', execArgs: ['-e']),
+      _Terminal('tilix', execArgs: ['-e']),
+      _Terminal('xfce4-terminal', execArgs: ['-x']),
+      _Terminal('alacritty', execArgs: ['-e']),
+      _Terminal('kitty', execArgs: <String>[]),
+      _Terminal('xterm', execArgs: ['-e']),
     ];
 
     for (final c in candidates) {
@@ -234,7 +247,9 @@ class StoreService {
 class _Terminal {
   final String command;
   final List<String> execArgs;
-  _Terminal(this.command, this.execArgs);
+  final List<String> waitArgs;
+  _Terminal(this.command,
+      {required this.execArgs, this.waitArgs = const <String>[]});
 }
 
 class NoTerminalException implements Exception {

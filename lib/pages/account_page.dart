@@ -22,21 +22,18 @@ class AccountPage extends StatelessWidget {
 
   Future<void> _login(BuildContext context) async {
     final cancelToken = CancelToken();
-    Process? terminal;
+    LoginSession? session;
 
     void cancel() {
       cancelToken.cancel();
-      final t = terminal;
-      if (t != null) {
-        // Fire-and-forget kill of the terminal + snapcraft child.
-        StoreService().killTerminal(t);
-      }
+      // Signal the inner shell to kill snapcraft login and close the window.
+      session?.cancel();
     }
 
     state.setBusy(true, message: 'Opening login terminal...');
     try {
       try {
-        terminal = await StoreService().loginInTerminal();
+        session = await StoreService().loginInTerminal();
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -63,12 +60,9 @@ class AccountPage extends StatelessWidget {
       final acct = await StoreService().waitForLogin(cancelToken: cancelToken);
       state.setAccount(acct);
 
-      // If login succeeded (or timed out without cancel), close the terminal
-      // window we opened so it does not linger.
-      final t = terminal;
-      if (t != null && !cancelToken.isCancelled) {
-        await StoreService().killTerminal(t);
-      }
+      // On success, the terminal auto-closes itself; on cancel we already
+      // signalled it. Either way, clean up the sentinel.
+      await session?.dispose();
 
       if (acct == null && !cancelToken.isCancelled && context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -79,6 +73,7 @@ class AccountPage extends StatelessWidget {
         );
       }
     } finally {
+      await session?.dispose();
       state.busy = false;
     }
   }

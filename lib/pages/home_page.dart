@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:yaru/yaru.dart';
 
 import '../theme/status_colors.dart';
 import '../models/wizard_step.dart';

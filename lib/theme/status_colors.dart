@@ -1,4 +1,3 @@
-import '../theme/status_colors.dart';
 import 'package:flutter/material.dart';
 
 /// Semantic status colors, previously provided by StatusColors.success etc.
