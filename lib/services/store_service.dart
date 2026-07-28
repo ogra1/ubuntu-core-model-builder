@@ -4,6 +4,7 @@ import 'package:path_provider/path_provider.dart';
 
 import 'cancel_token.dart';
 import 'host_env.dart';
+import 'snapcraft_env.dart';
 
 class StoreAccount {
   final String email;
@@ -17,20 +18,19 @@ class StoreAccount {
   });
 }
 
-/// Handle for an in-progress terminal login. Call [cancel] to signal the
-/// inner shell (via a sentinel file) to kill the login and close the window.
+/// Handle for an in-progress terminal login (older snapcraft). Call [cancel]
+/// to signal the inner shell (via a sentinel file) to kill the login and
+/// close the window.
 class LoginSession {
   final String sentinelPath;
   LoginSession(this.sentinelPath);
 
-  /// Signals cancellation by creating the sentinel file the inner shell polls.
   Future<void> cancel() async {
     try {
       await File(sentinelPath).create(recursive: true);
     } catch (_) {}
   }
 
-  /// Cleans up the sentinel file (call after login completes or is cancelled).
   Future<void> dispose() async {
     try {
       final f = File(sentinelPath);
@@ -42,10 +42,11 @@ class LoginSession {
 class StoreService {
   Future<StoreAccount?> getCurrentAccount() async {
     final shell = Shell(
-        throwOnError: false,
-		verbose: false,
-        environment: HostEnv.sanitized,
-        includeParentEnvironment: false);
+      throwOnError: false,
+      verbose: false,
+      environment: await SnapcraftEnv.environment(),
+      includeParentEnvironment: false,
+    );
     final result = await shell.run('snapcraft whoami');
     if (result.first.exitCode != 0) return null;
 
@@ -78,49 +79,54 @@ class StoreService {
 
   Future<bool> isLoggedIn() async => (await getCurrentAccount()) != null;
 
-  /// Launches `snapcraft login` in a terminal, using a sentinel-file cancel
-  /// mechanism that works across all terminals. Returns a [LoginSession];
-  /// the caller polls whoami for success and can call session.cancel().
-  ///
-  /// On success the window auto-closes immediately (the app confirms login
-  /// via whoami polling). On cancel the inner shell kills snapcraft login
-  /// and exits, closing the window.
+  /// True if the installed snapcraft supports browser-based (Candid) login.
+  Future<bool> supportsWebLogin() => SnapcraftEnv.supportsWebLogin();
+
+  /// Web login for snapcraft 9.x+: blocks, opens the browser, returns on
+  /// completion. No terminal needed. Returns the account on success, else
+  /// null.
+  Future<StoreAccount?> webLogin() async {
+    final result = await Process.run(
+      'snapcraft',
+      ['login'],
+      environment: await SnapcraftEnv.environment(),
+      includeParentEnvironment: false,
+    );
+    if (result.exitCode != 0) return null;
+    return getCurrentAccount();
+  }
+
+  /// Terminal-based login for older snapcraft (< 9). Uses a sentinel-file
+  /// cancel mechanism. Interactive login runs in the foreground (owns the
+  /// tty); a background watcher kills it when the sentinel appears.
   ///
   /// Throws [NoTerminalException] if no terminal emulator is found.
   Future<LoginSession> loginInTerminal() async {
     final term = await _findTerminal();
     if (term == null) throw NoTerminalException();
 
-    // Unique sentinel path in a temp dir.
     final dir = await getTemporaryDirectory();
     final sentinel =
         '${dir.path}/uc-login-cancel-${DateTime.now().millisecondsSinceEpoch}';
-    // Make sure a stale sentinel isn't present.
     try {
       final f = File(sentinel);
       if (await f.exists()) await f.delete();
     } catch (_) {}
 
-    // Inner shell: run snapcraft login in the background; poll for either its
-    // completion (exit immediately -> window closes) or the cancel sentinel
-    // (kill it and exit). No trailing "press any key" so success auto-closes.
-    final inner = '''
-# Background watcher: kill the whole script group when the sentinel appears.
-(
-  while [ ! -f "$sentinel" ]; do sleep 0.3; done
-  kill 0 2>/dev/null
-) &
-WATCHER=\$!
+    // Build the inner shell script by concatenation. The shell $ variables
+    // ($!, $WATCHER) live in RAW strings (r'...') so Dart never interpolates
+    // them; only the sentinel path is interpolated via ordinary strings.
+    final inner = '( while [ ! -f "' +
+        sentinel +
+        '" ]; do sleep 0.3; done; kill 0 2>/dev/null ) &\n' +
+        r'WATCHER=$!' +
+        '\n'
+            'snapcraft login\n' +
+        r'kill "$WATCHER" 2>/dev/null' +
+        '\n'
+            'exit 0\n';
 
-# Foreground interactive login (owns the tty so it can prompt).
-snapcraft login
-
-# Login returned on its own; stop the watcher and close the window.
-kill "\$WATCHER" 2>/dev/null
-exit 0
-''';
-
-    final env = HostEnv.sanitized;
+    final env = await SnapcraftEnv.environment();
     final hasSetsid = await _which('setsid') != null;
 
     if (hasSetsid) {
@@ -168,9 +174,11 @@ exit 0
 
   Future<void> logout() async {
     final shell = Shell(
-        throwOnError: false,
-        environment: HostEnv.sanitized,
-        includeParentEnvironment: false);
+      throwOnError: false,
+      verbose: false,
+      environment: await SnapcraftEnv.environment(),
+      includeParentEnvironment: false,
+    );
     await shell.run('snapcraft logout');
   }
 
@@ -188,14 +196,18 @@ exit 0
     try {
       await file.writeAsString(trimmed);
       try {
-        await Process.run('chmod', ['600', file.path],
-            environment: HostEnv.sanitized, includeParentEnvironment: false);
+        await Process.run(
+          'chmod',
+          ['600', file.path],
+          environment: HostEnv.sanitized,
+          includeParentEnvironment: false,
+        );
       } catch (_) {}
 
       final result = await Process.run(
         'snapcraft',
         ['login', '--with', file.path],
-        environment: HostEnv.sanitized,
+        environment: await SnapcraftEnv.environment(),
         includeParentEnvironment: false,
       );
 
@@ -216,8 +228,12 @@ exit 0
   }
 
   Future<String?> _which(String cmd) async {
-    final r = await Process.run('which', [cmd],
-        environment: HostEnv.sanitized, includeParentEnvironment: false);
+    final r = await Process.run(
+      'which',
+      [cmd],
+      environment: HostEnv.sanitized,
+      includeParentEnvironment: false,
+    );
     if (r.exitCode != 0) return null;
     final out = (r.stdout as String).trim();
     return out.isEmpty ? null : out;
@@ -248,8 +264,11 @@ class _Terminal {
   final String command;
   final List<String> execArgs;
   final List<String> waitArgs;
-  _Terminal(this.command,
-      {required this.execArgs, this.waitArgs = const <String>[]});
+  _Terminal(
+    this.command, {
+    required this.execArgs,
+    this.waitArgs = const <String>[],
+  });
 }
 
 class NoTerminalException implements Exception {

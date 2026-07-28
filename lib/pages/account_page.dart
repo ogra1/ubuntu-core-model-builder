@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:yaru/yaru.dart';
 import 'package:file_selector/file_selector.dart';
@@ -21,19 +19,39 @@ class AccountPage extends StatelessWidget {
   });
 
   Future<void> _login(BuildContext context) async {
+    final store = StoreService();
+
+    if (await store.supportsWebLogin()) {
+      state.setBusy(true, message: 'Opening login in your browser...');
+      try {
+        final acct = await store.webLogin();
+        state.setAccount(acct);
+        if (acct == null && context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Login was not completed.'),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+      } finally {
+        state.busy = false;
+      }
+      return;
+    }
+
     final cancelToken = CancelToken();
     LoginSession? session;
 
     void cancel() {
       cancelToken.cancel();
-      // Signal the inner shell to kill snapcraft login and close the window.
       session?.cancel();
     }
 
     state.setBusy(true, message: 'Opening login terminal...');
     try {
       try {
-        session = await StoreService().loginInTerminal();
+        session = await store.loginInTerminal();
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -57,11 +75,8 @@ class AccountPage extends StatelessWidget {
         message: 'Waiting for login to complete...',
         onCancel: cancel,
       );
-      final acct = await StoreService().waitForLogin(cancelToken: cancelToken);
+      final acct = await store.waitForLogin(cancelToken: cancelToken);
       state.setAccount(acct);
-
-      // On success, the terminal auto-closes itself; on cancel we already
-      // signalled it. Either way, clean up the sentinel.
       await session?.dispose();
 
       if (acct == null && !cancelToken.isCancelled && context.mounted) {
