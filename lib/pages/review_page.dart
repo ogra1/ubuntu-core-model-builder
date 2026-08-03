@@ -23,9 +23,9 @@ class _ReviewPageState extends State<ReviewPage> {
 
   VerificationReport? _report;
   String? _savedPath;
-  String? _jsonHeader; // the unsigned JSON that was signed
-  bool _alsoSaveJson = false; // default unchecked; overridden by saved pref
-  String? _lastSaveDir; // remembered across sessions
+  String? _jsonHeader;
+  bool _alsoSaveJson = false;
+  String? _lastSaveDir;
 
   @override
   void initState() {
@@ -44,9 +44,7 @@ class _ReviewPageState extends State<ReviewPage> {
           if (dir != null && dir.isNotEmpty) _lastSaveDir = dir;
         });
       }
-    } catch (_) {
-      // If prefs are unavailable, keep the default (false).
-    }
+    } catch (_) {}
   }
 
   Future<void> _setAlsoSaveJson(bool value) async {
@@ -54,9 +52,7 @@ class _ReviewPageState extends State<ReviewPage> {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool(_prefAlsoSaveJson, value);
-    } catch (_) {
-      // Non-fatal: the choice just won't persist this time.
-    }
+    } catch (_) {}
   }
 
   Future<void> _rememberSaveDir(String savedPath) async {
@@ -66,12 +62,9 @@ class _ReviewPageState extends State<ReviewPage> {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_prefLastSaveDir, dir);
-    } catch (_) {
-      // Non-fatal; the directory just won't persist this time.
-    }
+    } catch (_) {}
   }
 
-  /// Returns the directory portion of a file path, or null if none.
   String? _dirOf(String path) {
     final idx = path.lastIndexOf(RegExp(r'[/\\]'));
     if (idx <= 0) return null;
@@ -86,21 +79,19 @@ class _ReviewPageState extends State<ReviewPage> {
     try {
       final result =
           await SnapcraftService().signModel(widget.state.model, keyName);
-
       final report = await AssertionVerifier().verify(
         signedAssertion: result.signedAssertion,
         originalModel: widget.state.model,
         signingKeyName: keyName,
       );
-
       setState(() {
         _report = report;
         _jsonHeader = result.jsonHeader;
+        _savedPath = null; // fresh signature => not yet saved
         widget.state.signedAssertion =
             report.allPassed ? result.signedAssertion : null;
       });
       widget.state.refresh();
-
       if (!report.allPassed) {
         _showError('Signed, but verification found problems. See report.');
       }
@@ -133,8 +124,6 @@ class _ReviewPageState extends State<ReviewPage> {
     final svc = SnapcraftService();
     await svc.saveToFile(signed, location.path);
     setState(() => _savedPath = location.path);
-
-    // Remember the directory for next time.
     await _rememberSaveDir(location.path);
 
     String? jsonPath;
@@ -251,6 +240,18 @@ class _ReviewPageState extends State<ReviewPage> {
   @override
   Widget build(BuildContext context) {
     final signed = widget.state.signedAssertion;
+
+    // If the signature was invalidated (model edited elsewhere), drop the
+    // local verification/JSON/saved state so nothing stale is shown. Safe to
+    // mutate fields directly during build (no setState needed - we are
+    // already building, and the values only affect this build's output).
+    if (signed == null &&
+        (_report != null || _jsonHeader != null || _savedPath != null)) {
+      _report = null;
+      _jsonHeader = null;
+      _savedPath = null;
+    }
+
     return ListView(
       padding: const EdgeInsets.all(24),
       children: [
@@ -285,8 +286,8 @@ class _ReviewPageState extends State<ReviewPage> {
                   : () => _setAlsoSaveJson(!_alsoSaveJson),
               borderRadius: BorderRadius.circular(4),
               child: Padding(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 8, vertical: 4),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [

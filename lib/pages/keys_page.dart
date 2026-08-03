@@ -98,6 +98,7 @@ class _KeysPageState extends State<KeysPage> {
       return;
     }
     widget.state.selectedKeyName = key.name;
+    widget.state.invalidateSignature(); // a new key invalidates prior signing
     widget.state.refresh();
     _rememberKey(key.name);
     setState(() {});

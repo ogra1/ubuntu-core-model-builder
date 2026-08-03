@@ -40,6 +40,12 @@ class _HomePageState extends State<HomePage> {
     if (mounted) setState(() {});
   }
 
+  /// Callback for editing pages: invalidate any prior signature, then refresh.
+  void _onModelEdited() {
+    _state.invalidateSignature();
+    _state.refresh();
+  }
+
   Future<void> _bootstrap() async {
     _state.busy = true;
     try {
@@ -102,9 +108,9 @@ class _HomePageState extends State<HomePage> {
       case WizardStep.account:
         return AccountPage(state: _state, onRetry: _bootstrap);
       case WizardStep.metadata:
-        return MetadataPage(state: _state, onChanged: _state.refresh);
+        return MetadataPage(state: _state, onChanged: _onModelEdited);
       case WizardStep.snaps:
-        return SnapsPage(model: _state.model, onChanged: _state.refresh);
+        return SnapsPage(model: _state.model, onChanged: _onModelEdited);
       case WizardStep.keys:
         return KeysPage(state: _state);
       case WizardStep.review:

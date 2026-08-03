@@ -66,6 +66,15 @@ class WizardState extends ChangeNotifier {
 
   void refresh() => notifyListeners();
 
+  /// Clears any previously signed assertion. Call whenever the model is
+  /// edited so the Review step no longer shows a stale signature.
+  void invalidateSignature() {
+    if (signedAssertion != null) {
+      signedAssertion = null;
+      notifyListeners();
+    }
+  }
+
   /// Replaces the current model with an imported one. Resets signing state
   /// (a fresh model must be re-signed) and any selected key stays as-is.
   void importModel(ModelAssertion imported) {
