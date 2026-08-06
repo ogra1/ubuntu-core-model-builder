@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -270,7 +272,44 @@ class _MetadataPageState extends State<MetadataPage> {
   // Store fetch / picker
   // ---------------------------------------------------------------------------
 
+  Future<List<BrandStore>> _loadCachedStores() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(SurlService.prefCachedStores);
+      if (raw == null || raw.isEmpty) return const [];
+      final list = jsonDecode(raw) as List<dynamic>;
+      return list
+          .map((e) => BrandStore.fromJson(e as Map<String, dynamic>))
+          .toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  Future<void> _saveCachedStores(List<BrandStore> stores) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = jsonEncode(stores.map((s) => s.toJson()).toList());
+      await prefs.setString(SurlService.prefCachedStores, raw);
+    } catch (_) {}
+  }
+
   Future<void> _fetchStores(BuildContext context) async {
+    // Use the permanent cache if present (instant, no surl call). The picker
+    // offers a Refresh button to re-query surl on demand.
+    final cached = await _loadCachedStores();
+    if (cached.isNotEmpty) {
+      if (!context.mounted) return;
+      await _showStorePicker(context, cached);
+      return;
+    }
+    // No cache yet: query surl for the first time.
+    await _queryAndShowStores(context);
+  }
+
+  /// Forces a surl query (used by the picker's Refresh button and the first
+  /// fetch), updates the cache, and shows the picker.
+  Future<void> _queryAndShowStores(BuildContext context) async {
     final surl = SurlService();
     state.setBusy(true, message: 'Fetching your stores...');
     try {
@@ -278,12 +317,12 @@ class _MetadataPageState extends State<MetadataPage> {
       try {
         stores = await surl.listStores();
       } on SurlAuthException {
-        // Not authenticated: run web-login in the browser, then retry once.
         state.setBusy(true, message: 'Opening login in your browser...');
         await surl.webLogin();
         state.setBusy(true, message: 'Fetching your stores...');
         stores = await surl.listStores();
       }
+      await _saveCachedStores(stores);
       if (!context.mounted) return;
       await _showStorePicker(context, stores);
     } on SurlUnavailableException catch (e) {
@@ -307,30 +346,54 @@ class _MetadataPageState extends State<MetadataPage> {
         return an.compareTo(bn);
       });
 
+    // Sentinel to distinguish "Refresh" from a normal selection/cancel.
+    const refreshSentinel = BrandStore(id: '__refresh__');
+
     final selected = await showDialog<BrandStore>(
       context: context,
-      builder: (_) => SimpleDialog(
+      builder: (dialogContext) => AlertDialog(
         title: const Text('Select a store'),
-        children: [
-          for (final st in sorted)
-            SimpleDialogOption(
-              onPressed: () => Navigator.pop(context, st),
-              child: ListTile(
-                contentPadding: EdgeInsets.zero,
-                title: Text(st.isGlobal
-                    ? 'Global store (no store ID)'
-                    : (st.name ?? st.id)),
-                subtitle: st.isGlobal
-                    ? const Text('Standard Ubuntu store')
-                    : Text('${st.id}'
-                        '${st.roles.isNotEmpty ? "  •  ${st.roles.join(", ")}" : ""}'),
-              ),
-            ),
+        content: SizedBox(
+          width: 480,
+          child: ListView(
+            shrinkWrap: true,
+            children: [
+              for (final st in sorted)
+                ListTile(
+                  title: Text(st.isGlobal
+                      ? 'Global store (no store ID)'
+                      : (st.name ?? st.id)),
+                  subtitle: st.isGlobal
+                      ? const Text('Standard Ubuntu store')
+                      : Text('${st.id}'
+                          '${st.roles.isNotEmpty ? "  •  ${st.roles.join(", ")}" : ""}'),
+                  onTap: () => Navigator.pop(dialogContext, st),
+                ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () =>
+                Navigator.pop(dialogContext, refreshSentinel),
+            child: const Text('Refresh'),
+          ),
         ],
       ),
     );
 
-    if (selected == null) return;
+    if (selected == null) return; // Cancel / dismissed.
+
+    if (identical(selected, refreshSentinel) ||
+        selected.id == '__refresh__') {
+      // Re-query surl, update cache, reopen picker.
+      if (context.mounted) await _queryAndShowStores(context);
+      return;
+    }
 
     if (selected.isGlobal) {
       model.store = null;

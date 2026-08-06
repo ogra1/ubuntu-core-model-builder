@@ -9,9 +9,24 @@ class BrandStore {
   final String id;
   final String? name;
   final List<String> roles;
-  BrandStore({required this.id, this.name, this.roles = const []});
+  const BrandStore({required this.id, this.name, this.roles = const []});
 
   bool get isGlobal => id == 'ubuntu';
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'roles': roles,
+      };
+
+  factory BrandStore.fromJson(Map<String, dynamic> j) => BrandStore(
+        id: j['id'] as String,
+        name: j['name'] as String?,
+        roles: (j['roles'] as List<dynamic>?)
+                ?.map((r) => r.toString())
+                .toList() ??
+            const [],
+      );
 }
 
 class SurlAuthException implements Exception {
@@ -29,6 +44,12 @@ class SurlUnavailableException implements Exception {
 }
 
 class SurlService {
+  /// Shared SharedPreferences key for the cached brand-store list, so both
+  /// the metadata page (which writes it) and the account page (which clears
+  /// it on logout) reference one source of truth.
+  static const prefCachedStores = 'metadata.cachedStores';
+
+
   // The auth identity this app owns in surl. The user never manages this.
   static const _authName = 'ubuntu-core-model-builder';
   static const _server = 'production';

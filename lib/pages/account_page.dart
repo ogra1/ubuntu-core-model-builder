@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:yaru/yaru.dart';
 import 'package:file_selector/file_selector.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../theme/status_colors.dart';
 import '../models/wizard_step.dart';
 import '../services/cancel_token.dart';
 import '../services/store_service.dart';
+import '../services/surl_service.dart';
 import '../services/tool_locator.dart';
 
 class AccountPage extends StatelessWidget {
@@ -98,6 +100,12 @@ class AccountPage extends StatelessWidget {
     try {
       await StoreService().logout();
       state.setAccount(null);
+      // Clear the cached brand-store list so a different account does not see
+      // the previous account's stores.
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.remove(SurlService.prefCachedStores);
+      } catch (_) {}
     } finally {
       state.busy = false;
     }
