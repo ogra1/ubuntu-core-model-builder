@@ -96,6 +96,44 @@ class ModelImportService {
       ..base = h['base']?.toString()
       ..grade = _parseGrade(h['grade']?.toString(), warnings);
 
+    // Reject model types this app does not support editing. We build
+    // grade-based Ubuntu Core models (with a base, grade, and snaps list).
+    // Classic and legacy UC16/18 models have different prerequisites.
+    final classicVal = h['classic']?.toString().toLowerCase();
+    if (classicVal == 'true') {
+      throw ModelImportException(
+        'This is a classic model (classic: true). This app edits Ubuntu '
+        'Core grade models, which have different prerequisites (kernel, '
+        'gadget, base, snapd). Classic models are not supported.',
+      );
+    }
+    // Positive detection of legacy UC16/18 models: they carry top-level
+    // scalar "kernel:" and/or "gadget:" headers (as strings like
+    // "pc-kernel=18"), whereas grade models list kernel/gadget only inside
+    // the nested "snaps:" block. A top-level kernel/gadget scalar therefore
+    // means a legacy model.
+    final topLevelKernel = _isScalarString(h['kernel']);
+    final topLevelGadget = _isScalarString(h['gadget']);
+    if (topLevelKernel || topLevelGadget) {
+      throw ModelImportException(
+        'This looks like a legacy UC16/18 model: it declares top-level '
+        '"kernel"/"gadget" fields instead of a grade-based "snaps" list. '
+        'This app builds modern Ubuntu Core grade models and does not '
+        'support the legacy format.',
+      );
+    }
+
+    // Fallback heuristic: a grade model always has both a grade and a base.
+    final hasGrade = (h['grade']?.toString().trim().isNotEmpty) ?? false;
+    final hasBase = (h['base']?.toString().trim().isNotEmpty) ?? false;
+    if (!hasGrade && !hasBase) {
+      throw ModelImportException(
+        'This model is not a grade-based Ubuntu Core model (no "grade" or '
+        '"base" header, and no legacy kernel/gadget fields). The format is '
+        'not supported.',
+      );
+    }
+
     final arch = model.architecture.name;
 
     final entries = <SnapEntry>[];
@@ -146,6 +184,13 @@ class ModelImportService {
       importedBrandId: model.brandId,
       warnings: warnings,
     );
+  }
+
+  /// True if [v] is a non-empty scalar string (i.e. a top-level string
+  /// header value), as opposed to a nested list/map (which the parser
+  /// represents as a List) or null.
+  bool _isScalarString(dynamic v) {
+    return v is String && v.trim().isNotEmpty;
   }
 
   ModelArchitecture _parseArch(String? v, List<String> warnings) {

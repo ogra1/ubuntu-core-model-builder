@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:file_selector/file_selector.dart';
@@ -8,6 +9,7 @@ import 'package:yaru/yaru.dart';
 import '../models/model_assertion.dart';
 import '../models/wizard_step.dart';
 import '../services/model_import_service.dart';
+import '../services/host_env.dart';
 import '../services/surl_service.dart';
 
 class MetadataPage extends StatefulWidget {
@@ -94,6 +96,26 @@ class _MetadataPageState extends State<MetadataPage> {
   // ---------------------------------------------------------------------------
   // Import
   // ---------------------------------------------------------------------------
+
+  Future<void> _openExamplesRepo() async {
+    const url = 'https://github.com/canonical/models';
+    try {
+      await Process.run('xdg-open', [url],
+          environment: HostEnv.sanitized, includeParentEnvironment: false);
+    } catch (_) {
+      // If xdg-open is unavailable, show the URL so the user can copy it.
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            behavior: SnackBarBehavior.floating,
+            content: Text('Browse example models at: '
+                'https://github.com/canonical/models'),
+            duration: Duration(seconds: 8),
+          ),
+        );
+      }
+    }
+  }
 
   Future<void> _import(BuildContext context) async {
     final hasData = model.model != null || model.snaps.isNotEmpty;
@@ -436,6 +458,12 @@ class _MetadataPageState extends State<MetadataPage> {
             Text('Model Metadata',
                 style: Theme.of(context).textTheme.headlineSmall),
             const Spacer(),
+            TextButton.icon(
+              onPressed: _openExamplesRepo,
+              icon: const Icon(Icons.travel_explore),
+              label: const Text('Browse examples'),
+            ),
+            const SizedBox(width: 8),
             OutlinedButton.icon(
               onPressed: () => _import(context),
               icon: const Icon(Icons.file_open_outlined),
