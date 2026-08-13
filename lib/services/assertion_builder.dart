@@ -26,6 +26,25 @@ class AssertionBuilder {
       header['store'] = store;
     }
 
+    // system-user-authority: omit for brandOnly (default); '*' for anyone;
+    // a list of account IDs for specificIds.
+    switch (model.systemUserAuthorityMode) {
+      case SystemUserAuthorityMode.brandOnly:
+        break; // omit
+      case SystemUserAuthorityMode.anyone:
+        header['system-user-authority'] = '*';
+        break;
+      case SystemUserAuthorityMode.specificIds:
+        final ids = model.systemUserAuthorityIds
+            .map((e) => e.trim())
+            .where((e) => e.isNotEmpty)
+            .toList();
+        if (ids.isNotEmpty) {
+          header['system-user-authority'] = ids;
+        }
+        break;
+    }
+
     header['snaps'] =
         _orderedSnaps(model.snaps).map(_snapToMap).toList(growable: false);
 

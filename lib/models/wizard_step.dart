@@ -3,13 +3,14 @@ import 'model_assertion.dart';
 import '../services/store_service.dart';
 import '../services/tool_locator.dart';
 
-enum WizardStep { account, metadata, snaps, keys, review }
+enum WizardStep { account, metadata, snaps, extras, keys, review }
 
 extension WizardStepInfo on WizardStep {
   String get label => switch (this) {
         WizardStep.account => 'Account',
         WizardStep.metadata => 'Metadata',
         WizardStep.snaps => 'Snaps',
+        WizardStep.extras => 'Extras',
         WizardStep.keys => 'Signing Key',
         WizardStep.review => 'Review & Sign',
       };
@@ -18,6 +19,7 @@ extension WizardStepInfo on WizardStep {
         WizardStep.account => Icons.account_circle_outlined,
         WizardStep.metadata => Icons.description_outlined,
         WizardStep.snaps => Icons.widgets_outlined,
+        WizardStep.extras => Icons.tune_outlined,
         WizardStep.keys => Icons.vpn_key_outlined,
         WizardStep.review => Icons.check_circle_outline,
       };
@@ -26,6 +28,7 @@ extension WizardStepInfo on WizardStep {
         WizardStep.account => Icons.account_circle,
         WizardStep.metadata => Icons.description,
         WizardStep.snaps => Icons.widgets,
+        WizardStep.extras => Icons.tune,
         WizardStep.keys => Icons.vpn_key,
         WizardStep.review => Icons.check_circle,
       };
@@ -40,8 +43,6 @@ class WizardState extends ChangeNotifier {
   String? signedAssertion;
   String? busyMessage;
 
-  /// If non-null while [busy], the overlay shows a Cancel button that
-  /// invokes this callback.
   VoidCallback? busyCancelCallback;
 
   bool _busy = false;
@@ -55,8 +56,6 @@ class WizardState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Set busy state with an optional status message and optional cancel
-  /// callback shown in the overlay.
   void setBusy(bool value, {String? message, VoidCallback? onCancel}) {
     _busy = value;
     busyMessage = value ? message : null;
@@ -66,8 +65,6 @@ class WizardState extends ChangeNotifier {
 
   void refresh() => notifyListeners();
 
-  /// Clears any previously signed assertion. Call whenever the model is
-  /// edited so the Review step no longer shows a stale signature.
   void invalidateSignature() {
     if (signedAssertion != null) {
       signedAssertion = null;
@@ -75,8 +72,6 @@ class WizardState extends ChangeNotifier {
     }
   }
 
-  /// Replaces the current model with an imported one. Resets signing state
-  /// (a fresh model must be re-signed) and any selected key stays as-is.
   void importModel(ModelAssertion imported) {
     model
       ..type = imported.type
@@ -88,8 +83,10 @@ class WizardState extends ChangeNotifier {
       ..base = imported.base
       ..grade = imported.grade
       ..store = imported.store
+      ..systemUserAuthorityMode = imported.systemUserAuthorityMode
+      ..systemUserAuthorityIds = imported.systemUserAuthorityIds
       ..snaps = imported.snaps;
-    signedAssertion = null; // imported model is unsigned / must be re-signed
+    signedAssertion = null;
     notifyListeners();
   }
 
@@ -110,9 +107,23 @@ class WizardState extends ChangeNotifier {
           account != null && (toolStatus?.ready ?? false),
         WizardStep.metadata => _metadataValid,
         WizardStep.snaps => _snapsValid,
+        WizardStep.extras => true, // all Extras are optional
         WizardStep.keys => selectedKeyName != null,
         WizardStep.review => signedAssertion != null,
       };
+
+  /// Whether a step should DISPLAY a completion checkmark in the nav rail.
+  /// This differs from [isStepComplete] for optional steps (Extras): the
+  /// Extras step is always "complete" for gating purposes (it never blocks),
+  /// but its checkmark should only appear once the user has satisfied the
+  /// required steps that precede it, so it does not look done from the start.
+  bool showStepComplete(WizardStep step) {
+    if (step == WizardStep.extras) {
+      // Show the checkmark only when everything before Extras is complete.
+      return isStepEnabled(WizardStep.extras);
+    }
+    return isStepComplete(step);
+  }
 
   bool isStepEnabled(WizardStep step) {
     final index = step.index;
@@ -173,6 +184,8 @@ class WizardState extends ChangeNotifier {
             (s) => s.type.name == 'base' && s.name == baseName)) {
           errors.add('Add the "$baseName" base snap.');
         }
+      case WizardStep.extras:
+        break; // no required fields
       case WizardStep.keys:
         if (selectedKeyName == null) {
           errors.add('Select or create a signing key.');

@@ -30,12 +30,6 @@ class ModelImportService {
   ModelImportService({StoreApiService? store})
       : _store = store ?? StoreApiService();
 
-  /// Imports a model from a file. Detects unsigned JSON vs. signed assertion
-  /// text by content. Returns an editable ModelAssertion.
-  ///
-  /// [reResolveAppBase] looks up each app snap's base from the store so
-  /// dependent-base presence coupling works after import. Costs one network
-  /// call per app snap (parallelised).
   Future<ImportResult> importFromFile(
     String path, {
     bool reResolveAppBase = true,
@@ -45,9 +39,10 @@ class ModelImportService {
 
     Map<String, dynamic> headerMap;
     List<Map<String, String>> snapMaps;
+    // system-user-authority parsed from the appropriate source.
+    SystemUserAuthorityParse suaParse;
 
     if (trimmed.startsWith('{')) {
-      // Unsigned JSON.
       final decoded = jsonDecode(raw);
       if (decoded is! Map<String, dynamic>) {
         throw ModelImportException('JSON is not a model object.');
@@ -56,11 +51,12 @@ class ModelImportService {
       final rawSnaps = (decoded['snaps'] as List<dynamic>?) ?? const [];
       snapMaps = rawSnaps
           .whereType<Map>()
-          .map((m) => m.map(
-              (k, v) => MapEntry(k.toString(), v?.toString() ?? '')))
+          .map((m) =>
+              m.map((k, v) => MapEntry(k.toString(), v?.toString() ?? '')))
           .toList();
+      // From JSON: the value is a real array or the string '*'.
+      suaParse = _suaFromJson(decoded['system-user-authority']);
     } else {
-      // Signed .model assertion text: parse scalar headers + snaps block.
       final ParsedAssertion parsed;
       try {
         parsed = AssertionParser.parse(raw);
@@ -73,32 +69,42 @@ class ModelImportService {
       }
       headerMap = parsed.headers;
       snapMaps = AssertionParser.parseSnaps(raw);
+      // From signed .model: dedicated block parser (handles multi-id lists).
+      suaParse = AssertionParser.parseSystemUserAuthority(raw);
     }
 
-    return _buildResult(headerMap, snapMaps,
+    return _buildResult(headerMap, snapMaps, suaParse,
         reResolveAppBase: reResolveAppBase);
+  }
+
+  SystemUserAuthorityParse _suaFromJson(dynamic v) {
+    if (v is String && v.trim() == '*') {
+      return const SystemUserAuthorityParse(anyone: true, ids: []);
+    }
+    if (v is List) {
+      final ids = v
+          .map((e) => e.toString().trim())
+          .where((e) => e.isNotEmpty)
+          .toList();
+      if (ids.contains('*')) {
+        return const SystemUserAuthorityParse(anyone: true, ids: []);
+      }
+      return SystemUserAuthorityParse(anyone: false, ids: ids);
+    }
+    if (v is String && v.trim().isNotEmpty) {
+      return SystemUserAuthorityParse(anyone: false, ids: [v.trim()]);
+    }
+    return const SystemUserAuthorityParse(anyone: false, ids: []);
   }
 
   Future<ImportResult> _buildResult(
     Map<String, dynamic> h,
-    List<Map<String, String>> snapMaps, {
+    List<Map<String, String>> snapMaps,
+    SystemUserAuthorityParse suaParse, {
     required bool reResolveAppBase,
   }) async {
     final warnings = <String>[];
 
-    final model = ModelAssertion()
-      ..type = (h['type']?.toString()) ?? 'model'
-      ..authorityId = h['authority-id']?.toString()
-      ..brandId = h['brand-id']?.toString()
-      ..series = (h['series']?.toString()) ?? '16'
-      ..model = h['model']?.toString()
-      ..architecture = _parseArch(h['architecture']?.toString(), warnings)
-      ..base = h['base']?.toString()
-      ..grade = _parseGrade(h['grade']?.toString(), warnings);
-
-    // Reject model types this app does not support editing. We build
-    // grade-based Ubuntu Core models (with a base, grade, and snaps list).
-    // Classic and legacy UC16/18 models have different prerequisites.
     final classicVal = h['classic']?.toString().toLowerCase();
     if (classicVal == 'true') {
       throw ModelImportException(
@@ -107,11 +113,7 @@ class ModelImportService {
         'gadget, base, snapd). Classic models are not supported.',
       );
     }
-    // Positive detection of legacy UC16/18 models: they carry top-level
-    // scalar "kernel:" and/or "gadget:" headers (as strings like
-    // "pc-kernel=18"), whereas grade models list kernel/gadget only inside
-    // the nested "snaps:" block. A top-level kernel/gadget scalar therefore
-    // means a legacy model.
+
     final topLevelKernel = _isScalarString(h['kernel']);
     final topLevelGadget = _isScalarString(h['gadget']);
     if (topLevelKernel || topLevelGadget) {
@@ -123,7 +125,6 @@ class ModelImportService {
       );
     }
 
-    // Fallback heuristic: a grade model always has both a grade and a base.
     final hasGrade = (h['grade']?.toString().trim().isNotEmpty) ?? false;
     final hasBase = (h['base']?.toString().trim().isNotEmpty) ?? false;
     if (!hasGrade && !hasBase) {
@@ -134,6 +135,27 @@ class ModelImportService {
       );
     }
 
+    final model = ModelAssertion()
+      ..type = (h['type']?.toString()) ?? 'model'
+      ..authorityId = h['authority-id']?.toString()
+      ..brandId = h['brand-id']?.toString()
+      ..series = (h['series']?.toString()) ?? '16'
+      ..model = h['model']?.toString()
+      ..architecture = _parseArch(h['architecture']?.toString(), warnings)
+      ..base = h['base']?.toString()
+      ..grade = _parseGrade(h['grade']?.toString(), warnings)
+      ..store = h['store']?.toString();
+
+    // Apply the parsed system-user-authority.
+    if (suaParse.anyone) {
+      model.systemUserAuthorityMode = SystemUserAuthorityMode.anyone;
+    } else if (suaParse.ids.isNotEmpty) {
+      model.systemUserAuthorityMode = SystemUserAuthorityMode.specificIds;
+      model.systemUserAuthorityIds = suaParse.ids;
+    } else {
+      model.systemUserAuthorityMode = SystemUserAuthorityMode.brandOnly;
+    }
+
     final arch = model.architecture.name;
 
     final entries = <SnapEntry>[];
@@ -141,12 +163,7 @@ class ModelImportService {
       final name = m['name'];
       if (name == null || name.isEmpty) continue;
       final type = _parseType(m['type']);
-      // A base snap that is not the model's own base can only have gotten
-      // into the model because an app pulled it in. Mark such bases as
-      // autoAdded so the Snaps page auto-removes them when their last
-      // dependent app is removed, matching freshly built models.
-      final isDependentBase =
-          type == SnapType.base && name != model.base;
+      final isDependentBase = type == SnapType.base && name != model.base;
       entries.add(SnapEntry(
         name: name,
         id: m['id'] ?? '',
@@ -158,7 +175,6 @@ class ModelImportService {
     }
 
     if (reResolveAppBase) {
-      // Parallelise the per-app store lookups.
       final futures = <Future<void>>[];
       for (var i = 0; i < entries.length; i++) {
         final e = entries[i];
@@ -167,7 +183,7 @@ class ModelImportService {
           try {
             final info = await _store.getSnapInfo(e.name, arch);
             entries[i] = e.copyWith(appBase: info.base);
-          } catch (err) {
+          } catch (_) {
             warnings.add(
                 'Could not resolve base for "${e.name}"; dependent base '
                 'coupling may be inexact for it.');
@@ -186,12 +202,7 @@ class ModelImportService {
     );
   }
 
-  /// True if [v] is a non-empty scalar string (i.e. a top-level string
-  /// header value), as opposed to a nested list/map (which the parser
-  /// represents as a List) or null.
-  bool _isScalarString(dynamic v) {
-    return v is String && v.trim().isNotEmpty;
-  }
+  bool _isScalarString(dynamic v) => v is String && v.trim().isNotEmpty;
 
   ModelArchitecture _parseArch(String? v, List<String> warnings) {
     for (final a in ModelArchitecture.values) {

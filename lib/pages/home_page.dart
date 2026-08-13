@@ -7,6 +7,7 @@ import '../services/tool_locator.dart';
 import 'account_page.dart';
 import 'metadata_page.dart';
 import 'snaps_page.dart';
+import 'extras_page.dart';
 import 'keys_page.dart';
 import 'review_page.dart';
 
@@ -111,6 +112,8 @@ class _HomePageState extends State<HomePage> {
         return MetadataPage(state: _state, onChanged: _onModelEdited);
       case WizardStep.snaps:
         return SnapsPage(model: _state.model, onChanged: _onModelEdited);
+      case WizardStep.extras:
+        return ExtrasPage(state: _state, onChanged: _onModelEdited);
       case WizardStep.keys:
         return KeysPage(state: _state);
       case WizardStep.review:
@@ -210,7 +213,7 @@ class _HomePageState extends State<HomePage> {
         ),
       ),
       destinations: WizardStep.values.map((step) {
-        final complete = _state.isStepComplete(step);
+        final complete = _state.showStepComplete(step);
         final enabled = _state.isStepEnabled(step);
         return NavigationRailDestination(
           disabled: !enabled,

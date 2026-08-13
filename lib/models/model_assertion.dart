@@ -4,6 +4,12 @@ enum ModelGrade { dangerous, signed, secured }
 
 enum ModelArchitecture { amd64, arm64, armhf, i386, riscv64 }
 
+/// Controls who may sign system-user assertions the device accepts.
+/// brandOnly => omit the field (default: only the brand can sign).
+/// specificIds => a list of account IDs allowed to sign.
+/// anyone => the literal '*' (any account may sign).
+enum SystemUserAuthorityMode { brandOnly, specificIds, anyone }
+
 class ModelAssertion {
   String type = 'model';
   String? authorityId;
@@ -14,6 +20,9 @@ class ModelAssertion {
   String? base;
   ModelGrade grade = ModelGrade.signed;
   String? store; // optional brand store ID; null/empty => global store
+  SystemUserAuthorityMode systemUserAuthorityMode =
+      SystemUserAuthorityMode.brandOnly;
+  List<String> systemUserAuthorityIds = [];
   List<SnapEntry> snaps = [];
   DateTime timestamp = DateTime.now().toUtc();
 
