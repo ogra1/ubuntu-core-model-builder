@@ -20,8 +20,6 @@ class ExtrasPage extends StatefulWidget {
 class _ExtrasPageState extends State<ExtrasPage> {
   ModelAssertion get model => widget.state.model;
 
-  // Controllers for the specific-IDs list. Rebuilt when the ids list changes
-  // in a way that adds/removes rows.
   final List<TextEditingController> _idControllers = [];
 
   @override
@@ -39,7 +37,6 @@ class _ExtrasPageState extends State<ExtrasPage> {
   }
 
   void _syncControllers() {
-    // Ensure one controller per id, preserving existing text.
     while (_idControllers.length < model.systemUserAuthorityIds.length) {
       _idControllers.add(TextEditingController(
           text: model.systemUserAuthorityIds[_idControllers.length]));
@@ -60,7 +57,6 @@ class _ExtrasPageState extends State<ExtrasPage> {
       model.systemUserAuthorityMode = mode;
       if (mode == SystemUserAuthorityMode.specificIds &&
           model.systemUserAuthorityIds.isEmpty) {
-        // Start with one empty row for convenience.
         model.systemUserAuthorityIds = [''];
         _syncControllers();
       }
@@ -145,6 +141,26 @@ class _ExtrasPageState extends State<ExtrasPage> {
                       'Allow one or more account IDs to sign system-user '
                       'assertions for this device.'),
                 ),
+                // ID editors appear directly under the "Specific account IDs"
+                // option they belong to.
+                if (mode == SystemUserAuthorityMode.specificIds)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 32, top: 4, bottom: 8),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        ..._buildIdEditors(context),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: TextButton.icon(
+                            onPressed: _addId,
+                            icon: const Icon(Icons.add),
+                            label: const Text('Add account ID'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 RadioListTile<SystemUserAuthorityMode>(
                   contentPadding: EdgeInsets.zero,
                   value: SystemUserAuthorityMode.anyone,
@@ -154,52 +170,41 @@ class _ExtrasPageState extends State<ExtrasPage> {
                   subtitle: const Text(
                       'Any account may sign system-user assertions (uses "*").'),
                 ),
-                if (mode == SystemUserAuthorityMode.specificIds) ...[
-                  const SizedBox(height: 8),
-                  ..._buildIdEditors(context),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: TextButton.icon(
-                      onPressed: _addId,
-                      icon: const Icon(Icons.add),
-                      label: const Text('Add account ID'),
-                    ),
-                  ),
-                ],
-                if (mode == SystemUserAuthorityMode.anyone) ...[
-                  const SizedBox(height: 8),
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Theme.of(context)
-                          .colorScheme
-                          .errorContainer
-                          .withOpacity(0.5),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(Icons.warning_amber,
-                            color: Theme.of(context)
-                                .colorScheme
-                                .onErrorContainer),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Text(
-                            'Allowing anyone to sign system-user assertions '
-                            'is a significant security relaxation. Only use '
-                            'this if you understand the implications.',
-                            style: TextStyle(
+                if (mode == SystemUserAuthorityMode.anyone)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context)
+                            .colorScheme
+                            .errorContainer
+                            .withOpacity(0.5),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.warning_amber,
                               color: Theme.of(context)
                                   .colorScheme
-                                  .onErrorContainer,
+                                  .onErrorContainer),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              'Allowing anyone to sign system-user assertions '
+                              'is a significant security relaxation. Only use '
+                              'this if you understand the implications.',
+                              style: TextStyle(
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onErrorContainer,
+                              ),
                             ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
-                ],
               ],
             ),
           ),
@@ -228,9 +233,8 @@ class _ExtrasPageState extends State<ExtrasPage> {
             IconButton(
               icon: const Icon(Icons.delete_outline),
               tooltip: 'Remove',
-              onPressed: _idControllers.length > 1
-                  ? () => _removeId(i)
-                  : null,
+              onPressed:
+                  _idControllers.length > 1 ? () => _removeId(i) : null,
             ),
           ],
         ),
