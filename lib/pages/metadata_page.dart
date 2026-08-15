@@ -7,9 +7,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:yaru/yaru.dart';
 
 import '../models/model_assertion.dart';
+import '../models/snap_entry.dart';
 import '../models/wizard_step.dart';
 import '../services/model_import_service.dart';
 import '../services/host_env.dart';
+import '../services/store_api_service.dart';
 import '../services/surl_service.dart';
 
 class MetadataPage extends StatefulWidget {
@@ -32,6 +34,7 @@ class _MetadataPageState extends State<MetadataPage> {
   final _nameController = TextEditingController();
   final _storeController = TextEditingController();
   final _storeFocus = FocusNode();
+  final _store = StoreApiService();
 
   List<String> _recentStores = [];
 
@@ -94,6 +97,113 @@ class _MetadataPageState extends State<MetadataPage> {
   }
 
   // ---------------------------------------------------------------------------
+  // Base change: seed the new base snap and warn on gadget mismatch
+  // ---------------------------------------------------------------------------
+
+  Future<void> _onBaseChanged(String? newBase) async {
+    if (newBase == null) return;
+    model.base = newBase;
+    state.invalidateSignature();
+    widget.onChanged();
+    setState(() {});
+
+    final arch = model.architecture.name;
+    state.setBusy(true, message: 'Updating base snap...');
+    try {
+      // 1. Always seed the new base snap if not already present (idempotent).
+      await _ensureBaseSnap(newBase, arch);
+
+      // 2. Check the gadget: its base must match the new model base.
+      await _checkGadgetBase(newBase, arch);
+    } catch (e) {
+      _error(context, 'Could not update base: $e');
+    } finally {
+      state.busy = false;
+    }
+  }
+
+  /// Adds the base snap for [baseName] if the model does not already contain
+  /// a base snap with that name. Idempotent; safe to call repeatedly.
+  Future<void> _ensureBaseSnap(String baseName, String arch) async {
+    final alreadyPresent = model.snaps
+        .any((s) => s.type == SnapType.base && s.name == baseName);
+    if (alreadyPresent) return;
+
+    final info = await _store.getSnapInfo(baseName, arch);
+    final track = RegExp(r'(\d+)').firstMatch(baseName)?.group(1);
+    String channel = 'latest/stable';
+    if (track != null) {
+      channel = info.channels.firstWhere(
+        (c) => c.startsWith('$track/stable'),
+        orElse: () => info.channels.firstWhere(
+          (c) => c.startsWith('$track/'),
+          orElse: () =>
+              info.channels.isNotEmpty ? info.channels.first : 'latest/stable',
+        ),
+      );
+    } else if (info.channels.isNotEmpty) {
+      channel = info.channels.firstWhere(
+        (c) => c.endsWith('/stable'),
+        orElse: () => info.channels.first,
+      );
+    }
+
+    model.snaps.removeWhere((s) => s.name == info.name);
+    model.snaps.add(SnapEntry(
+      name: info.name,
+      id: info.snapId,
+      type: SnapType.base,
+      defaultChannel: channel,
+    ));
+    widget.onChanged();
+    if (mounted) setState(() {});
+  }
+
+  /// Warns (authoritatively, via store lookup) if the current gadget's base
+  /// does not match [newBase]. The gadget must be built on the model base.
+  Future<void> _checkGadgetBase(String newBase, String arch) async {
+    SnapEntry? gadget;
+    for (final s in model.snaps) {
+      if (s.type == SnapType.gadget) {
+        gadget = s;
+        break;
+      }
+    }
+    if (gadget == null) return; // no gadget yet; nothing to check
+
+    String? gadgetBase;
+    try {
+      final info = await _store.getSnapInfo(gadget.name, arch);
+      gadgetBase = info.base;
+    } catch (_) {
+      return; // can't resolve; skip the warning rather than false-alarm
+    }
+
+    if (gadgetBase != null && gadgetBase != newBase) {
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('Gadget base mismatch'),
+          content: Text(
+            'The gadget snap "${gadget!.name}" is built on "$gadgetBase", '
+            'which does not match the new model base "$newBase".\n\n'
+            'For the image build to succeed, the gadget must be built on '
+            '"$newBase". Go to the Snaps page and replace the gadget with '
+            'one built on "$newBase".',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Import
   // ---------------------------------------------------------------------------
 
@@ -103,7 +213,6 @@ class _MetadataPageState extends State<MetadataPage> {
       await Process.run('xdg-open', [url],
           environment: HostEnv.sanitized, includeParentEnvironment: false);
     } catch (_) {
-      // If xdg-open is unavailable, show the URL so the user can copy it.
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -317,20 +426,15 @@ class _MetadataPageState extends State<MetadataPage> {
   }
 
   Future<void> _fetchStores(BuildContext context) async {
-    // Use the permanent cache if present (instant, no surl call). The picker
-    // offers a Refresh button to re-query surl on demand.
     final cached = await _loadCachedStores();
     if (cached.isNotEmpty) {
       if (!context.mounted) return;
       await _showStorePicker(context, cached);
       return;
     }
-    // No cache yet: query surl for the first time.
     await _queryAndShowStores(context);
   }
 
-  /// Forces a surl query (used by the picker's Refresh button and the first
-  /// fetch), updates the cache, and shows the picker.
   Future<void> _queryAndShowStores(BuildContext context) async {
     final surl = SurlService();
     state.setBusy(true, message: 'Fetching your stores...');
@@ -368,7 +472,6 @@ class _MetadataPageState extends State<MetadataPage> {
         return an.compareTo(bn);
       });
 
-    // Sentinel to distinguish "Refresh" from a normal selection/cancel.
     const refreshSentinel = BrandStore(id: '__refresh__');
 
     final selected = await showDialog<BrandStore>(
@@ -400,19 +503,17 @@ class _MetadataPageState extends State<MetadataPage> {
             child: const Text('Cancel'),
           ),
           TextButton(
-            onPressed: () =>
-                Navigator.pop(dialogContext, refreshSentinel),
+            onPressed: () => Navigator.pop(dialogContext, refreshSentinel),
             child: const Text('Refresh'),
           ),
         ],
       ),
     );
 
-    if (selected == null) return; // Cancel / dismissed.
+    if (selected == null) return;
 
     if (identical(selected, refreshSentinel) ||
         selected.id == '__refresh__') {
-      // Re-query surl, update cache, reopen picker.
       if (context.mounted) await _queryAndShowStores(context);
       return;
     }
@@ -534,10 +635,7 @@ class _MetadataPageState extends State<MetadataPage> {
                   items: const ['core22', 'core24', 'core26']
                       .map((b) => DropdownMenuItem(value: b, child: Text(b)))
                       .toList(),
-                  onChanged: (v) {
-                    model.base = v;
-                    widget.onChanged();
-                  },
+                  onChanged: (v) => _onBaseChanged(v),
                 ),
                 const SizedBox(height: 16),
                 Row(
