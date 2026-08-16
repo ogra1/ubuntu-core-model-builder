@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:yaru/yaru.dart';
-
 import '../models/model_assertion.dart';
 import '../models/wizard_step.dart';
 
@@ -21,16 +20,21 @@ class _ExtrasPageState extends State<ExtrasPage> {
   ModelAssertion get model => widget.state.model;
 
   final List<TextEditingController> _idControllers = [];
+  final List<TextEditingController> _serialControllers = [];
 
   @override
   void initState() {
     super.initState();
     _syncControllers();
+    _syncSerialControllers();
   }
 
   @override
   void dispose() {
     for (final c in _idControllers) {
+      c.dispose();
+    }
+    for (final c in _serialControllers) {
       c.dispose();
     }
     super.dispose();
@@ -48,6 +52,22 @@ class _ExtrasPageState extends State<ExtrasPage> {
       final want = model.systemUserAuthorityIds[i];
       if (_idControllers[i].text != want) {
         _idControllers[i].text = want;
+      }
+    }
+  }
+
+  void _syncSerialControllers() {
+    while (_serialControllers.length < model.serialAuthorityIds.length) {
+      _serialControllers.add(TextEditingController(
+          text: model.serialAuthorityIds[_serialControllers.length]));
+    }
+    while (_serialControllers.length > model.serialAuthorityIds.length) {
+      _serialControllers.removeLast().dispose();
+    }
+    for (var i = 0; i < _serialControllers.length; i++) {
+      final want = model.serialAuthorityIds[i];
+      if (_serialControllers[i].text != want) {
+        _serialControllers[i].text = want;
       }
     }
   }
@@ -88,9 +108,36 @@ class _ExtrasPageState extends State<ExtrasPage> {
     widget.onChanged();
   }
 
+  // --- serial-authority handlers ---
+
+  void _addSerialId() {
+    setState(() {
+      model.serialAuthorityIds = [...model.serialAuthorityIds, ''];
+      _syncSerialControllers();
+    });
+    widget.onChanged();
+  }
+
+  void _removeSerialId(int index) {
+    setState(() {
+      final list = [...model.serialAuthorityIds]..removeAt(index);
+      model.serialAuthorityIds = list;
+      _syncSerialControllers();
+    });
+    widget.onChanged();
+  }
+
+  void _updateSerialId(int index, String value) {
+    final list = [...model.serialAuthorityIds];
+    list[index] = value;
+    model.serialAuthorityIds = list;
+    widget.onChanged();
+  }
+
   @override
   Widget build(BuildContext context) {
     _syncControllers();
+    _syncSerialControllers();
     final mode = model.systemUserAuthorityMode;
 
     return ListView(
@@ -141,8 +188,6 @@ class _ExtrasPageState extends State<ExtrasPage> {
                       'Allow one or more account IDs to sign system-user '
                       'assertions for this device.'),
                 ),
-                // ID editors appear directly under the "Specific account IDs"
-                // option they belong to.
                 if (mode == SystemUserAuthorityMode.specificIds)
                   Padding(
                     padding: const EdgeInsets.only(left: 32, top: 4, bottom: 8),
@@ -210,11 +255,81 @@ class _ExtrasPageState extends State<ExtrasPage> {
           ),
         ),
         const SizedBox(height: 24),
+        _buildSerialAuthoritySection(context),
+        const SizedBox(height: 24),
         _buildValidationSetsSection(context),
         const SizedBox(height: 24),
         _buildStorageSafetySection(context),
       ],
     );
+  }
+
+  Widget _buildSerialAuthoritySection(BuildContext context) {
+    return YaruSection(
+      headline: const Text('Serial authority'),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Account IDs allowed to sign serial assertions (device '
+              'identities) for this model, in addition to your brand. Leave '
+              'empty so only your brand can sign serials (the default).',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).hintColor,
+                  ),
+            ),
+            const SizedBox(height: 12),
+            if (_serialControllers.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Text('Brand only (default).',
+                    style: Theme.of(context).textTheme.bodyMedium),
+              )
+            else
+              ..._buildSerialEditors(context),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: _addSerialId,
+                icon: const Icon(Icons.add),
+                label: const Text('Add serial-authority account ID'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _buildSerialEditors(BuildContext context) {
+    final widgets = <Widget>[];
+    for (var i = 0; i < _serialControllers.length; i++) {
+      widgets.add(Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _serialControllers[i],
+                decoration: InputDecoration(
+                  labelText: 'Account ID ${i + 1}',
+                  isDense: true,
+                ),
+                onChanged: (v) => _updateSerialId(i, v),
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.delete_outline),
+              tooltip: 'Remove',
+              onPressed: () => _removeSerialId(i),
+            ),
+          ],
+        ),
+      ));
+    }
+    return widgets;
   }
 
   Widget _buildStorageSafetySection(BuildContext context) {
@@ -386,7 +501,7 @@ class _ExtrasPageState extends State<ExtrasPage> {
               Expanded(
                 flex: 3,
                 child: TextFormField(
-                  key: ValueKey('vset-account-\$index-\${v.accountId}'),
+                  key: ValueKey('vset-account-$index-${v.accountId}'),
                   initialValue: v.accountId,
                   decoration: const InputDecoration(
                     labelText: 'Account ID',
@@ -402,7 +517,7 @@ class _ExtrasPageState extends State<ExtrasPage> {
               Expanded(
                 flex: 3,
                 child: TextFormField(
-                  key: ValueKey('vset-name-\$index-\${v.name}'),
+                  key: ValueKey('vset-name-$index-${v.name}'),
                   initialValue: v.name,
                   decoration: const InputDecoration(
                     labelText: 'Set name',
@@ -450,7 +565,7 @@ class _ExtrasPageState extends State<ExtrasPage> {
               SizedBox(
                 width: 160,
                 child: TextFormField(
-                  key: ValueKey('vset-seq-\$index-\${v.sequence}'),
+                  key: ValueKey('vset-seq-$index-${v.sequence}'),
                   initialValue: v.sequence?.toString() ?? '',
                   decoration: const InputDecoration(
                     labelText: 'Sequence (optional)',

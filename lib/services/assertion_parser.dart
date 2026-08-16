@@ -75,15 +75,10 @@ class AssertionParser {
     return _parseListOfMaps(text, 'snaps:');
   }
 
-  /// Parses the `validation-sets:` list from signed assertion text into a
-  /// list of maps (account-id, name, mode, sequence). Empty if absent.
   static List<Map<String, String>> parseValidationSets(String text) {
     return _parseListOfMaps(text, 'validation-sets:');
   }
 
-  /// Generic parser for a top-level "key:" introducing a list of "- " entries
-  /// whose fields are indented "field: value" lines. Used for both snaps and
-  /// validation-sets (identical structure).
   static List<Map<String, String>> _parseListOfMaps(
       String text, String topKey) {
     final lines = text.replaceAll('\r\n', '\n').split('\n');
@@ -129,6 +124,52 @@ class AssertionParser {
     }
 
     return result;
+  }
+
+  /// Parses a top-level "key:" introducing a simple list of scalar "- value"
+  /// items (e.g. serial-authority). Returns the list; empty if absent.
+  static List<String> parseStringList(String text, String topKey) {
+    final lines = text.replaceAll('\r\n', '\n').split('\n');
+    final keyLine = topKey.endsWith(':') ? topKey : '$topKey:';
+
+    var i = 0;
+    String? sameLine;
+    while (i < lines.length) {
+      final line = lines[i];
+      if (!line.startsWith(' ') &&
+          !line.startsWith('\t') &&
+          line.startsWith(keyLine)) {
+        sameLine = line.substring(keyLine.length).trim();
+        break;
+      }
+      i++;
+    }
+    if (i >= lines.length) return const [];
+
+    // Scalar on the same line (single value).
+    if (sameLine != null && sameLine.isNotEmpty) {
+      return [sameLine];
+    }
+
+    i++;
+    final items = <String>[];
+    while (i < lines.length) {
+      final line = lines[i];
+      if (line.isNotEmpty && !line.startsWith(' ') && !line.startsWith('\t')) {
+        break;
+      }
+      final trimmed = line.trim();
+      if (trimmed.isEmpty) {
+        i++;
+        continue;
+      }
+      if (trimmed.startsWith('-')) {
+        final item = trimmed.substring(1).trim();
+        if (item.isNotEmpty) items.add(item);
+      }
+      i++;
+    }
+    return items;
   }
 
   static SystemUserAuthorityParse parseSystemUserAuthority(String text) {

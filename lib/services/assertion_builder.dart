@@ -84,6 +84,16 @@ class AssertionBuilder {
         break;
     }
 
+    // serial-authority: a list of account IDs allowed to sign serials.
+    // Omitted when empty (only the brand may sign serials by default).
+    final serialIds = model.serialAuthorityIds
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+    if (serialIds.isNotEmpty) {
+      header['serial-authority'] = serialIds;
+    }
+
     header['snaps'] =
         _orderedSnaps(model.snaps).map(_snapToMap).toList(growable: false);
 

@@ -54,6 +54,7 @@ class ModelAssertion {
   List<String> systemUserAuthorityIds = [];
   List<ValidationSetRef> validationSets = [];
   StorageSafety storageSafety = StorageSafety.unset;
+  List<String> serialAuthorityIds = []; // empty => brand only (omit)
   List<SnapEntry> snaps = [];
   DateTime timestamp = DateTime.now().toUtc();
 

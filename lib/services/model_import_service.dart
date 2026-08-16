@@ -42,6 +42,7 @@ class ModelImportService {
     // system-user-authority parsed from the appropriate source.
     SystemUserAuthorityParse suaParse;
     List<Map<String, String>> vsetMaps;
+    List<String> serialIds;
 
     if (trimmed.startsWith('{')) {
       final decoded = jsonDecode(raw);
@@ -58,6 +59,7 @@ class ModelImportService {
       // From JSON: the value is a real array or the string '*'.
       suaParse = _suaFromJson(decoded['system-user-authority']);
       vsetMaps = _vsetsFromJson(decoded['validation-sets']);
+      serialIds = _stringListFromJson(decoded['serial-authority']);
     } else {
       final ParsedAssertion parsed;
       try {
@@ -74,10 +76,23 @@ class ModelImportService {
       // From signed .model: dedicated block parser (handles multi-id lists).
       suaParse = AssertionParser.parseSystemUserAuthority(raw);
       vsetMaps = AssertionParser.parseValidationSets(raw);
+      serialIds = AssertionParser.parseStringList(
+          raw, 'serial-authority');
     }
 
-    return _buildResult(headerMap, snapMaps, suaParse, vsetMaps,
+    return _buildResult(headerMap, snapMaps, suaParse, vsetMaps, serialIds,
         reResolveAppBase: reResolveAppBase);
+  }
+
+  List<String> _stringListFromJson(dynamic v) {
+    if (v is List) {
+      return v
+          .map((e) => e.toString().trim())
+          .where((e) => e.isNotEmpty)
+          .toList();
+    }
+    if (v is String && v.trim().isNotEmpty) return [v.trim()];
+    return const [];
   }
 
   List<Map<String, String>> _vsetsFromJson(dynamic v) {
@@ -117,7 +132,8 @@ class ModelImportService {
     Map<String, dynamic> h,
     List<Map<String, String>> snapMaps,
     SystemUserAuthorityParse suaParse,
-    List<Map<String, String>> vsetMaps, {
+    List<Map<String, String>> vsetMaps,
+    List<String> serialIds, {
     required bool reResolveAppBase,
   }) async {
     final warnings = <String>[];
@@ -203,6 +219,10 @@ class ModelImportService {
       default:
         model.storageSafety = StorageSafety.unset;
     }
+
+    // serial-authority
+    model.serialAuthorityIds =
+        serialIds.map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
 
     final arch = model.architecture.name;
 
