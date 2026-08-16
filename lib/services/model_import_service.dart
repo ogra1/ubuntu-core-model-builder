@@ -41,6 +41,7 @@ class ModelImportService {
     List<Map<String, String>> snapMaps;
     // system-user-authority parsed from the appropriate source.
     SystemUserAuthorityParse suaParse;
+    List<Map<String, String>> vsetMaps;
 
     if (trimmed.startsWith('{')) {
       final decoded = jsonDecode(raw);
@@ -56,6 +57,7 @@ class ModelImportService {
           .toList();
       // From JSON: the value is a real array or the string '*'.
       suaParse = _suaFromJson(decoded['system-user-authority']);
+      vsetMaps = _vsetsFromJson(decoded['validation-sets']);
     } else {
       final ParsedAssertion parsed;
       try {
@@ -71,10 +73,24 @@ class ModelImportService {
       snapMaps = AssertionParser.parseSnaps(raw);
       // From signed .model: dedicated block parser (handles multi-id lists).
       suaParse = AssertionParser.parseSystemUserAuthority(raw);
+      vsetMaps = AssertionParser.parseValidationSets(raw);
     }
 
-    return _buildResult(headerMap, snapMaps, suaParse,
+    return _buildResult(headerMap, snapMaps, suaParse, vsetMaps,
         reResolveAppBase: reResolveAppBase);
+  }
+
+  List<Map<String, String>> _vsetsFromJson(dynamic v) {
+    if (v is! List) return const [];
+    return v.whereType<Map>().map((m) {
+      final mm = m.cast<String, dynamic>();
+      return {
+        'account-id': mm['account-id']?.toString() ?? '',
+        'name': mm['name']?.toString() ?? '',
+        'mode': mm['mode']?.toString() ?? '',
+        if (mm['sequence'] != null) 'sequence': mm['sequence'].toString(),
+      };
+    }).toList();
   }
 
   SystemUserAuthorityParse _suaFromJson(dynamic v) {
@@ -100,7 +116,8 @@ class ModelImportService {
   Future<ImportResult> _buildResult(
     Map<String, dynamic> h,
     List<Map<String, String>> snapMaps,
-    SystemUserAuthorityParse suaParse, {
+    SystemUserAuthorityParse suaParse,
+    List<Map<String, String>> vsetMaps, {
     required bool reResolveAppBase,
   }) async {
     final warnings = <String>[];
@@ -154,6 +171,37 @@ class ModelImportService {
       model.systemUserAuthorityIds = suaParse.ids;
     } else {
       model.systemUserAuthorityMode = SystemUserAuthorityMode.brandOnly;
+    }
+
+    // validation-sets. An absent account-id means "use the brand-id", so we
+    // fill it in from the model's brand-id for display/round-trip.
+    final brandForVsets = model.brandId?.trim() ?? '';
+    model.validationSets = vsetMaps.map((m) {
+      final seqStr = m['sequence'];
+      final acct = (m['account-id'] ?? '').trim();
+      return ValidationSetRef(
+        accountId: acct.isEmpty ? brandForVsets : acct,
+        name: m['name'] ?? '',
+        mode: (m['mode'] == null || m['mode']!.isEmpty) ? 'enforce' : m['mode']!,
+        sequence: (seqStr != null && seqStr.isNotEmpty)
+            ? int.tryParse(seqStr)
+            : null,
+      );
+    }).where((v) => v.name.isNotEmpty).toList();
+
+    // storage-safety (top-level scalar)
+    switch (h['storage-safety']?.toString()) {
+      case 'encrypted':
+        model.storageSafety = StorageSafety.encrypted;
+        break;
+      case 'prefer-encrypted':
+        model.storageSafety = StorageSafety.preferEncrypted;
+        break;
+      case 'prefer-unencrypted':
+        model.storageSafety = StorageSafety.preferUnencrypted;
+        break;
+      default:
+        model.storageSafety = StorageSafety.unset;
     }
 
     final arch = model.architecture.name;

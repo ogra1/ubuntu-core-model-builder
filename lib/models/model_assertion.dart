@@ -10,6 +10,35 @@ enum ModelArchitecture { amd64, arm64, armhf, i386, riscv64 }
 /// anyone => the literal '*' (any account may sign).
 enum SystemUserAuthorityMode { brandOnly, specificIds, anyone }
 
+/// storage-safety: controls disk encryption. `unset` omits the field, letting
+/// the grade-based default apply (secured => encrypted; otherwise
+/// prefer-encrypted).
+enum StorageSafety { unset, encrypted, preferEncrypted, preferUnencrypted }
+
+/// A reference to a validation set the model enforces.
+/// mode is 'enforce' or 'prefer-enforce'; sequence is optional (pins a
+/// specific sequence, else the latest is used).
+class ValidationSetRef {
+  String accountId;
+  String name;
+  String mode;
+  int? sequence;
+
+  ValidationSetRef({
+    required this.accountId,
+    required this.name,
+    this.mode = 'enforce',
+    this.sequence,
+  });
+
+  ValidationSetRef clone() => ValidationSetRef(
+        accountId: accountId,
+        name: name,
+        mode: mode,
+        sequence: sequence,
+      );
+}
+
 class ModelAssertion {
   String type = 'model';
   String? authorityId;
@@ -23,6 +52,8 @@ class ModelAssertion {
   SystemUserAuthorityMode systemUserAuthorityMode =
       SystemUserAuthorityMode.brandOnly;
   List<String> systemUserAuthorityIds = [];
+  List<ValidationSetRef> validationSets = [];
+  StorageSafety storageSafety = StorageSafety.unset;
   List<SnapEntry> snaps = [];
   DateTime timestamp = DateTime.now().toUtc();
 

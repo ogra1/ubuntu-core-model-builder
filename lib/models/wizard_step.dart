@@ -85,6 +85,9 @@ class WizardState extends ChangeNotifier {
       ..store = imported.store
       ..systemUserAuthorityMode = imported.systemUserAuthorityMode
       ..systemUserAuthorityIds = imported.systemUserAuthorityIds
+      ..validationSets =
+          imported.validationSets.map((v) => v.clone()).toList()
+      ..storageSafety = imported.storageSafety
       ..snaps = imported.snaps;
     signedAssertion = null;
     notifyListeners();

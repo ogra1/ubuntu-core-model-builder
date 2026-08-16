@@ -209,8 +209,282 @@ class _ExtrasPageState extends State<ExtrasPage> {
             ),
           ),
         ),
+        const SizedBox(height: 24),
+        _buildValidationSetsSection(context),
+        const SizedBox(height: 24),
+        _buildStorageSafetySection(context),
       ],
     );
+  }
+
+  Widget _buildStorageSafetySection(BuildContext context) {
+    return YaruSection(
+      headline: const Text('Storage safety'),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Controls disk encryption for the device data partition. '
+              'Leave at the default to use the grade-based behaviour '
+              '(secured grade encrypts; otherwise it prefers encryption '
+              'when the hardware supports it).',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).hintColor,
+                  ),
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<StorageSafety>(
+              value: model.storageSafety,
+              decoration: const InputDecoration(labelText: 'storage-safety'),
+              items: const [
+                DropdownMenuItem(
+                  value: StorageSafety.unset,
+                  child: Text('Default (based on grade)'),
+                ),
+                DropdownMenuItem(
+                  value: StorageSafety.encrypted,
+                  child: Text('encrypted (require encryption)'),
+                ),
+                DropdownMenuItem(
+                  value: StorageSafety.preferEncrypted,
+                  child: Text('prefer-encrypted'),
+                ),
+                DropdownMenuItem(
+                  value: StorageSafety.preferUnencrypted,
+                  child: Text('prefer-unencrypted'),
+                ),
+              ],
+              onChanged: (v) {
+                setState(() =>
+                    model.storageSafety = v ?? StorageSafety.unset);
+                widget.onChanged();
+              },
+            ),
+            if (model.grade == ModelGrade.secured &&
+                model.storageSafety != StorageSafety.unset &&
+                model.storageSafety != StorageSafety.encrypted) ...[
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.errorContainer,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.error_outline,
+                        color: Theme.of(context).colorScheme.onErrorContainer),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        'A "secured" grade model must not have storage-safety '
+                        'overridden; only "encrypted" is valid. Signing will '
+                        'fail. Choose "encrypted" or "Default (based on '
+                        'grade)", or change the grade on the Metadata page.',
+                        style: TextStyle(
+                          color:
+                              Theme.of(context).colorScheme.onErrorContainer,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+            if (model.storageSafety == StorageSafety.encrypted) ...[
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Theme.of(context)
+                      .colorScheme
+                      .primaryContainer
+                      .withOpacity(0.4),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.info_outline,
+                        color: Theme.of(context)
+                            .colorScheme
+                            .onPrimaryContainer),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        'The image will require hardware-backed encryption '
+                        '(TPM/secure boot). Devices without it will fail to '
+                        'install.',
+                        style: TextStyle(
+                          color: Theme.of(context)
+                              .colorScheme
+                              .onPrimaryContainer,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildValidationSetsSection(BuildContext context) {
+    final vsets = model.validationSets;
+    return YaruSection(
+      headline: const Text('Validation sets'),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Optionally enforce one or more validation sets on the device. '
+              'Each entry pins/constrains snaps per the set. Leave empty if '
+              'not needed.',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).hintColor,
+                  ),
+            ),
+            const SizedBox(height: 12),
+            if (vsets.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Text('No validation sets.',
+                    style: Theme.of(context).textTheme.bodyMedium),
+              )
+            else
+              for (var i = 0; i < vsets.length; i++)
+                _buildValidationSetRow(context, i),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: _addValidationSet,
+                icon: const Icon(Icons.add),
+                label: const Text('Add validation set'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildValidationSetRow(BuildContext context, int index) {
+    final v = model.validationSets[index];
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                flex: 3,
+                child: TextFormField(
+                  key: ValueKey('vset-account-\$index-\${v.accountId}'),
+                  initialValue: v.accountId,
+                  decoration: const InputDecoration(
+                    labelText: 'Account ID',
+                    isDense: true,
+                  ),
+                  onChanged: (val) {
+                    v.accountId = val;
+                    widget.onChanged();
+                  },
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                flex: 3,
+                child: TextFormField(
+                  key: ValueKey('vset-name-\$index-\${v.name}'),
+                  initialValue: v.name,
+                  decoration: const InputDecoration(
+                    labelText: 'Set name',
+                    isDense: true,
+                  ),
+                  onChanged: (val) {
+                    v.name = val;
+                    widget.onChanged();
+                  },
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.delete_outline),
+                tooltip: 'Remove',
+                onPressed: () => _removeValidationSet(index),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Row(
+            children: [
+              SizedBox(
+                width: 200,
+                child: DropdownButtonFormField<String>(
+                  value: v.mode,
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Mode',
+                    isDense: true,
+                  ),
+                  items: const [
+                    DropdownMenuItem(
+                        value: 'enforce', child: Text('enforce')),
+                    DropdownMenuItem(
+                        value: 'prefer-enforce',
+                        child: Text('prefer-enforce')),
+                  ],
+                  onChanged: (val) {
+                    setState(() => v.mode = val ?? 'enforce');
+                    widget.onChanged();
+                  },
+                ),
+              ),
+              const SizedBox(width: 8),
+              SizedBox(
+                width: 160,
+                child: TextFormField(
+                  key: ValueKey('vset-seq-\$index-\${v.sequence}'),
+                  initialValue: v.sequence?.toString() ?? '',
+                  decoration: const InputDecoration(
+                    labelText: 'Sequence (optional)',
+                    isDense: true,
+                  ),
+                  keyboardType: TextInputType.number,
+                  onChanged: (val) {
+                    final t = val.trim();
+                    v.sequence = t.isEmpty ? null : int.tryParse(t);
+                    widget.onChanged();
+                  },
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _addValidationSet() {
+    setState(() {
+      model.validationSets.add(ValidationSetRef(
+        accountId: model.brandId ?? '',
+        name: '',
+        mode: 'enforce',
+      ));
+    });
+    widget.onChanged();
+  }
+
+  void _removeValidationSet(int index) {
+    setState(() => model.validationSets.removeAt(index));
+    widget.onChanged();
   }
 
   List<Widget> _buildIdEditors(BuildContext context) {

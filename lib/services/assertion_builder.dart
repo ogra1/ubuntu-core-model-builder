@@ -45,6 +45,45 @@ class AssertionBuilder {
         break;
     }
 
+    // validation-sets: a list of {account-id, name, mode, sequence?}.
+    // Omitted entirely when there are none.
+    final brand = model.brandId?.trim();
+    final vsets = model.validationSets
+        .where((v) => v.name.trim().isNotEmpty)
+        .map((v) {
+      final acct = v.accountId.trim();
+      final m = <String, dynamic>{};
+      // Omit account-id when it matches the brand-id (snapd assumes the
+      // brand-id in that case).
+      if (acct.isNotEmpty && acct != brand) {
+        m['account-id'] = acct;
+      }
+      m['name'] = v.name.trim();
+      m['mode'] = v.mode;
+      if (v.sequence != null) {
+        m['sequence'] = v.sequence.toString();
+      }
+      return m;
+    }).toList();
+    if (vsets.isNotEmpty) {
+      header['validation-sets'] = vsets;
+    }
+
+    // storage-safety: omit for unset (grade-based default applies).
+    switch (model.storageSafety) {
+      case StorageSafety.unset:
+        break;
+      case StorageSafety.encrypted:
+        header['storage-safety'] = 'encrypted';
+        break;
+      case StorageSafety.preferEncrypted:
+        header['storage-safety'] = 'prefer-encrypted';
+        break;
+      case StorageSafety.preferUnencrypted:
+        header['storage-safety'] = 'prefer-unencrypted';
+        break;
+    }
+
     header['snaps'] =
         _orderedSnaps(model.snaps).map(_snapToMap).toList(growable: false);
 
