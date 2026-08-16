@@ -39,6 +39,7 @@ class ModelImportService {
 
     Map<String, dynamic> headerMap;
     List<Map<String, String>> snapMaps;
+    List<Map<String, String>> snapComponents;
     // system-user-authority parsed from the appropriate source.
     SystemUserAuthorityParse suaParse;
     List<Map<String, String>> vsetMaps;
@@ -51,11 +52,31 @@ class ModelImportService {
       }
       headerMap = decoded;
       final rawSnaps = (decoded['snaps'] as List<dynamic>?) ?? const [];
-      snapMaps = rawSnaps
-          .whereType<Map>()
-          .map((m) =>
-              m.map((k, v) => MapEntry(k.toString(), v?.toString() ?? '')))
-          .toList();
+      snapMaps = [];
+      snapComponents = [];
+      for (final rs in rawSnaps.whereType<Map>()) {
+        final m = rs.cast<String, dynamic>();
+        // Scalar fields (exclude the nested components map).
+        final fields = <String, String>{};
+        m.forEach((k, v) {
+          if (k == 'components') return;
+          fields[k.toString()] = v?.toString() ?? '';
+        });
+        snapMaps.add(fields);
+        // Components: { name: { presence: <p> } } -> { name: presence }.
+        final comps = <String, String>{};
+        final rawComps = m['components'];
+        if (rawComps is Map) {
+          rawComps.forEach((cn, cv) {
+            String presence = 'optional';
+            if (cv is Map && cv['presence'] != null) {
+              presence = cv['presence'].toString();
+            }
+            comps[cn.toString()] = presence;
+          });
+        }
+        snapComponents.add(comps);
+      }
       // From JSON: the value is a real array or the string '*'.
       suaParse = _suaFromJson(decoded['system-user-authority']);
       vsetMaps = _vsetsFromJson(decoded['validation-sets']);
@@ -72,7 +93,9 @@ class ModelImportService {
             'File is a "${parsed.type}" assertion, not a model.');
       }
       headerMap = parsed.headers;
-      snapMaps = AssertionParser.parseSnaps(raw);
+      final parsedSnaps = AssertionParser.parseSnaps(raw);
+      snapMaps = parsedSnaps.map((p) => p.fields).toList();
+      snapComponents = parsedSnaps.map((p) => p.components).toList();
       // From signed .model: dedicated block parser (handles multi-id lists).
       suaParse = AssertionParser.parseSystemUserAuthority(raw);
       vsetMaps = AssertionParser.parseValidationSets(raw);
@@ -80,7 +103,7 @@ class ModelImportService {
           raw, 'serial-authority');
     }
 
-    return _buildResult(headerMap, snapMaps, suaParse, vsetMaps, serialIds,
+    return _buildResult(headerMap, snapMaps, snapComponents, suaParse, vsetMaps, serialIds,
         reResolveAppBase: reResolveAppBase);
   }
 
@@ -131,6 +154,7 @@ class ModelImportService {
   Future<ImportResult> _buildResult(
     Map<String, dynamic> h,
     List<Map<String, String>> snapMaps,
+    List<Map<String, String>> snapComponents,
     SystemUserAuthorityParse suaParse,
     List<Map<String, String>> vsetMaps,
     List<String> serialIds, {
@@ -227,11 +251,15 @@ class ModelImportService {
     final arch = model.architecture.name;
 
     final entries = <SnapEntry>[];
-    for (final m in snapMaps) {
+    for (var mi = 0; mi < snapMaps.length; mi++) {
+      final m = snapMaps[mi];
       final name = m['name'];
       if (name == null || name.isEmpty) continue;
       final type = _parseType(m['type']);
       final isDependentBase = type == SnapType.base && name != model.base;
+      final comps = (mi < snapComponents.length)
+          ? Map<String, String>.from(snapComponents[mi])
+          : <String, String>{};
       entries.add(SnapEntry(
         name: name,
         id: m['id'] ?? '',
@@ -239,6 +267,7 @@ class ModelImportService {
         defaultChannel: m['default-channel'] ?? 'latest/stable',
         presence: _parsePresence(m['presence']),
         autoAdded: isDependentBase,
+        components: comps,
       ));
     }
 

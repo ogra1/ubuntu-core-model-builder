@@ -24,6 +24,14 @@ class SystemUserAuthorityParse {
   bool get isPresent => anyone || ids.isNotEmpty;
 }
 
+/// A parsed snap entry: flat scalar fields plus a components map
+/// (name -> presence).
+class ParsedSnap {
+  final Map<String, String> fields;
+  final Map<String, String> components; // name -> presence
+  ParsedSnap(this.fields, this.components);
+}
+
 class AssertionParser {
   static ParsedAssertion parse(String text) {
     final normalized = text.replaceAll('\r\n', '\n');
@@ -71,8 +79,135 @@ class AssertionParser {
     return headers;
   }
 
-  static List<Map<String, String>> parseSnaps(String text) {
-    return _parseListOfMaps(text, 'snaps:');
+  static int _indentOf(String line) {
+    var n = 0;
+    while (n < line.length && line[n] == ' ') {
+      n++;
+    }
+    return n;
+  }
+
+  /// Parses the `snaps:` list, including each entry's nested `components:`
+  /// block. Entry fields are at 4-space indent; components names at 6, their
+  /// presence at 8 (per the assertion format).
+  static List<ParsedSnap> parseSnaps(String text) {
+    final lines = text.replaceAll('\r\n', '\n').split('\n');
+
+    var i = 0;
+    while (i < lines.length) {
+      if (lines[i].trimRight() == 'snaps:') break;
+      i++;
+    }
+    if (i >= lines.length) return const [];
+    i++;
+
+    final result = <ParsedSnap>[];
+    Map<String, String>? fields;
+    Map<String, String>? components;
+
+    void startEntry() {
+      fields = <String, String>{};
+      components = <String, String>{};
+      result.add(ParsedSnap(fields!, components!));
+    }
+
+    while (i < lines.length) {
+      final line = lines[i];
+
+      // A non-indented, non-empty line ends the snaps block.
+      if (line.isNotEmpty && !line.startsWith(' ') && !line.startsWith('\t')) {
+        break;
+      }
+
+      final trimmed = line.trim();
+      if (trimmed.isEmpty) {
+        i++;
+        continue;
+      }
+
+      final indent = _indentOf(line);
+
+      // Entry start "  -" (indent 2).
+      if (trimmed == '-') {
+        startEntry();
+        i++;
+        continue;
+      }
+
+      if (fields == null) {
+        // Field before any entry start; skip defensively.
+        i++;
+        continue;
+      }
+
+      // A "components:" field (indent 4, empty value) introduces the nested
+      // components block.
+      if (indent <= 4 && trimmed == 'components:') {
+        i++;
+        // Parse nested component entries until indentation returns to <= 4
+        // (next entry field) or the block ends.
+        while (i < lines.length) {
+          final cl = lines[i];
+          if (cl.isNotEmpty &&
+              !cl.startsWith(' ') &&
+              !cl.startsWith('\t')) {
+            break; // end of snaps block
+          }
+          final ct = cl.trim();
+          if (ct.isEmpty) {
+            i++;
+            continue;
+          }
+          final ci = _indentOf(cl);
+          if (ci <= 4) break; // back to entry-field level or entry start
+          // Component name line "      <name>:" (indent 6).
+          if (ct.endsWith(':') && ci >= 6 && ci < 8) {
+            final compName = ct.substring(0, ct.length - 1).trim();
+            // Look ahead for its "presence:" line (indent 8).
+            var presence = 'optional';
+            var j = i + 1;
+            while (j < lines.length) {
+              final pl = lines[j];
+              final pt = pl.trim();
+              if (pt.isEmpty) {
+                j++;
+                continue;
+              }
+              final pi = _indentOf(pl);
+              if (pi < 8) break; // no deeper -> done with this component
+              if (pt.startsWith('presence:')) {
+                presence = pt.substring('presence:'.length).trim();
+              }
+              j++;
+              // Only consume the immediate deeper lines for this component.
+              // Stop if we hit the next component (indent 6).
+              if (j < lines.length) {
+                final nl = lines[j];
+                if (nl.trim().isNotEmpty && _indentOf(nl) <= 6) break;
+              }
+            }
+            if (compName.isNotEmpty) {
+              components![compName] = presence;
+            }
+            i = j;
+            continue;
+          }
+          i++;
+        }
+        continue;
+      }
+
+      // A normal "key: value" entry field (indent 4).
+      final colon = trimmed.indexOf(':');
+      if (colon > 0) {
+        final key = trimmed.substring(0, colon).trim();
+        final value = trimmed.substring(colon + 1).trim();
+        fields![key] = value;
+      }
+      i++;
+    }
+
+    return result;
   }
 
   static List<Map<String, String>> parseValidationSets(String text) {
@@ -126,8 +261,6 @@ class AssertionParser {
     return result;
   }
 
-  /// Parses a top-level "key:" introducing a simple list of scalar "- value"
-  /// items (e.g. serial-authority). Returns the list; empty if absent.
   static List<String> parseStringList(String text, String topKey) {
     final lines = text.replaceAll('\r\n', '\n').split('\n');
     final keyLine = topKey.endsWith(':') ? topKey : '$topKey:';
@@ -146,7 +279,6 @@ class AssertionParser {
     }
     if (i >= lines.length) return const [];
 
-    // Scalar on the same line (single value).
     if (sameLine != null && sameLine.isNotEmpty) {
       return [sameLine];
     }

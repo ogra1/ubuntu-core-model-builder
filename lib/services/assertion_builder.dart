@@ -144,6 +144,20 @@ class AssertionBuilder {
           snap.presence == SnapPresence.required_ ? 'required' : 'optional';
     }
     map.removeWhere((_, v) => v == null || (v is String && v.isEmpty));
+
+    // Components: name -> { presence: <presence> }. Emitted after the scalar
+    // fields; not subject to the removeWhere above (it's a nested map).
+    if (snap.components.isNotEmpty) {
+      final comps = <String, dynamic>{};
+      snap.components.forEach((name, presence) {
+        final n = name.trim();
+        if (n.isEmpty) return;
+        comps[n] = {'presence': presence};
+      });
+      if (comps.isNotEmpty) {
+        map['components'] = comps;
+      }
+    }
     return map;
   }
 

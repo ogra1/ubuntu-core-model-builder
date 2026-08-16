@@ -1,8 +1,5 @@
 enum SnapType { kernel, gadget, base, app, snapd }
 
-/// Presence of an app or dependent-base snap in the model. Infrastructure
-/// snaps (kernel/gadget/snapd and the model's own base) are always required
-/// and don't set this.
 enum SnapPresence { required_, optional }
 
 class SnapEntry {
@@ -10,22 +7,14 @@ class SnapEntry {
   final String id;
   final SnapType type;
   final String defaultChannel;
-
-  /// For app snaps: required or optional presence.
-  /// For dependent base snaps: derived from the apps that use them.
-  /// Null for infrastructure snaps (implicitly required).
   final SnapPresence? presence;
-
-  /// For app snaps: the base this app is built on (e.g. "core24"), used to
-  /// drive precise presence coupling of dependent base snaps. Null for
-  /// non-app snaps.
   final String? appBase;
-
-  /// True if this snap was added automatically by the app (e.g. a base snap
-  /// added because an app depends on it). Auto-added bases are removed again
-  /// when their last dependent app is removed. User-added snaps are never
-  /// auto-removed.
   final bool autoAdded;
+
+  /// Components: name -> presence ('required' or 'optional'). Empty when none.
+  /// Currently only meaningful/edited for kernel snaps, but parsed/emitted for
+  /// any snap type so imported models do not lose component data.
+  final Map<String, String> components;
 
   SnapEntry({
     required this.name,
@@ -35,12 +24,14 @@ class SnapEntry {
     this.presence,
     this.appBase,
     this.autoAdded = false,
+    this.components = const {},
   });
 
   SnapEntry copyWith({
     SnapPresence? presence,
     String? appBase,
     bool? autoAdded,
+    Map<String, String>? components,
   }) =>
       SnapEntry(
         name: name,
@@ -50,6 +41,7 @@ class SnapEntry {
         presence: presence ?? this.presence,
         appBase: appBase ?? this.appBase,
         autoAdded: autoAdded ?? this.autoAdded,
+        components: components ?? this.components,
       );
 
   Map<String, dynamic> toMap() {

@@ -626,6 +626,131 @@ class _SnapsPageState extends State<SnapsPage> {
     );
   }
 
+  Future<void> _editComponents(SnapEntry snap) async {
+    // Work on a mutable copy of the components map.
+    final working = Map<String, String>.from(snap.components);
+
+    final result = await showDialog<Map<String, String>>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            final nameController = TextEditingController();
+            String newPresence = 'optional';
+            return AlertDialog(
+              title: Text('Components for "${snap.name}"'),
+              content: SizedBox(
+                width: 480,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Add kernel components by name and choose their '
+                      'presence. Component names are specific to the kernel '
+                      'snap (e.g. nvidia-590-uda-ko).',
+                    ),
+                    const SizedBox(height: 12),
+                    if (working.isEmpty)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 8),
+                        child: Text('No components.'),
+                      )
+                    else
+                      ...working.entries.map((e) => Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 2),
+                            child: Row(
+                              children: [
+                                Expanded(child: Text(e.key)),
+                                DropdownButton<String>(
+                                  value: e.value,
+                                  items: const [
+                                    DropdownMenuItem(
+                                        value: 'optional',
+                                        child: Text('optional')),
+                                    DropdownMenuItem(
+                                        value: 'required',
+                                        child: Text('required')),
+                                  ],
+                                  onChanged: (v) => setDialogState(
+                                      () => working[e.key] = v ?? 'optional'),
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.delete_outline),
+                                  onPressed: () => setDialogState(
+                                      () => working.remove(e.key)),
+                                ),
+                              ],
+                            ),
+                          )),
+                    const Divider(),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: nameController,
+                            decoration: const InputDecoration(
+                              labelText: 'New component name',
+                              isDense: true,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        DropdownButton<String>(
+                          value: newPresence,
+                          items: const [
+                            DropdownMenuItem(
+                                value: 'optional', child: Text('optional')),
+                            DropdownMenuItem(
+                                value: 'required', child: Text('required')),
+                          ],
+                          onChanged: (v) => setDialogState(
+                              () => newPresence = v ?? 'optional'),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.add),
+                          tooltip: 'Add',
+                          onPressed: () {
+                            final n = nameController.text.trim();
+                            if (n.isNotEmpty) {
+                              setDialogState(() {
+                                working[n] = newPresence;
+                                nameController.clear();
+                              });
+                            }
+                          },
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  onPressed: () => Navigator.pop(dialogContext, working),
+                  child: const Text('Save'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    if (result == null) return; // cancelled
+
+    final idx = widget.model.snaps.indexOf(snap);
+    if (idx >= 0) {
+      widget.model.snaps[idx] = snap.copyWith(components: result);
+      widget.onChanged();
+      setState(() {});
+    }
+  }
+
   Widget _buildSnapTile(BuildContext context, SnapEntry s) {
     final isApp = s.type == SnapType.app;
     final isDependentBase =
@@ -636,6 +761,12 @@ class _SnapsPageState extends State<SnapsPage> {
     final trailing = Row(
       mainAxisSize: MainAxisSize.min,
       children: [
+        if (s.type == SnapType.kernel)
+          IconButton(
+            icon: const Icon(Icons.extension_outlined),
+            tooltip: 'Edit components',
+            onPressed: () => _editComponents(s),
+          ),
         if (isApp)
           IconButton(
             icon: Icon(isRequired ? Icons.lock : Icons.lock_open),
@@ -680,7 +811,8 @@ class _SnapsPageState extends State<SnapsPage> {
         ],
       ),
       subtitle: Text(
-        'id: ${s.id}\nchannel: ${s.defaultChannel}',
+        'id: ${s.id}\nchannel: ${s.defaultChannel}'
+        '${s.components.isNotEmpty ? "\ncomponents: ${s.components.length}" : ""}',
         style: Theme.of(context).textTheme.bodySmall,
       ),
       trailing: trailing,
