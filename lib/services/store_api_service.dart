@@ -139,6 +139,88 @@ class StoreApiService {
     );
   }
 
+  /// Returns the base for a snap on a SPECIFIC channel/architecture, read
+  /// from the matching channel-map entry. Different channels of a snap can
+  /// have different bases (e.g. a gadget on 24/stable => core24 but on
+  /// 26/stable => core26), so callers that care about the base for the
+  /// channel they will actually use must resolve it per-channel rather than
+  /// relying on getSnapInfo's channel-agnostic base.
+  ///
+  /// [channel] is in canonical "track/risk" form (e.g. "26/stable").
+  /// Returns null if no matching entry or no base is found.
+  /// Returns the list of (channel, base) pairs for a snap on the given
+  /// architecture, from the channel-map. Channel is canonical "track/risk";
+  /// base may be null (e.g. latest/* channels). Deduplicated by channel,
+  /// preserving the channel sort order used elsewhere.
+  Future<List<({String channel, String? base})>> getChannelsWithBases(
+      String name, String architecture) async {
+    final uri = Uri.parse(
+      '$_base/snaps/info/${Uri.encodeComponent(name)}'
+      '?fields=base,revision',
+    );
+    final resp = await http.get(uri, headers: _headers(architecture));
+    if (resp.statusCode != 200) return const [];
+    final body = jsonDecode(resp.body) as Map<String, dynamic>;
+    final channelMap = body['channel-map'] as List<dynamic>? ?? const [];
+
+    final seen = <String>{};
+    final result = <({String channel, String? base})>[];
+    for (final entry in channelMap) {
+      final m = entry as Map<String, dynamic>;
+      final ch = m['channel'] as Map<String, dynamic>?;
+      if (ch == null) continue;
+      final arch = ch['architecture'] as String?;
+      if (arch != null && arch != architecture) continue;
+
+      final track = ch['track'] as String? ?? 'latest';
+      final risk = ch['risk'] as String? ?? 'stable';
+      final chanName = ch['name'] as String?;
+      final canonical = (chanName != null && chanName.contains('/'))
+          ? chanName
+          : (track == 'latest' ? risk : '$track/$risk');
+
+      if (seen.add(canonical)) {
+        result.add((channel: canonical, base: m['base'] as String?));
+      }
+    }
+    result.sort((a, b) => _channelCompare(a.channel, b.channel));
+    return result;
+  }
+
+  Future<String?> getBaseForChannel(
+      String name, String architecture, String channel) async {
+    final uri = Uri.parse(
+      '$_base/snaps/info/${Uri.encodeComponent(name)}'
+      '?fields=base,revision',
+    );
+    final resp = await http.get(uri, headers: _headers(architecture));
+    if (resp.statusCode != 200) return null;
+    final body = jsonDecode(resp.body) as Map<String, dynamic>;
+    final channelMap = body['channel-map'] as List<dynamic>? ?? const [];
+
+    for (final entry in channelMap) {
+      final m = entry as Map<String, dynamic>;
+      final ch = m['channel'] as Map<String, dynamic>?;
+      if (ch == null) continue;
+      final arch = ch['architecture'] as String?;
+      if (arch != null && arch != architecture) continue;
+
+      final track = ch['track'] as String? ?? 'latest';
+      final risk = ch['risk'] as String? ?? 'stable';
+      final composed = track == 'latest' ? risk : '$track/$risk';
+      final nameField = ch['name'] as String?;
+
+      // Match either the canonical composed form or the channel's own name.
+      if (composed == channel ||
+          nameField == channel ||
+          // Also accept a bare-risk channel matching a latest/<risk>.
+          (track == 'latest' && risk == channel)) {
+        return m['base'] as String?;
+      }
+    }
+    return null;
+  }
+
   static int _channelCompare(String a, String b) {
     final pa = a.split('/');
     final pb = b.split('/');

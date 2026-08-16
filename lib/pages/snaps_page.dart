@@ -25,13 +25,67 @@ class _SnapsPageState extends State<SnapsPage> {
   bool _busy = false;
   String? _seedError;
 
+  // Cached gadget-base resolution for the persistent inline indicator.
+  String? _gadgetBase; // resolved base of the current gadget (per channel)
+  String? _gadgetBaseFor; // "name|channel" the cached base was resolved for
+  bool _resolvingGadgetBase = false;
+
   String get _arch => widget.model.architecture.name;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance
-        .addPostFrameCallback((_) => _seedRequiredSnaps());
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await _seedRequiredSnaps();
+      _resolveGadgetBase();
+    });
+  }
+
+  SnapEntry? get _currentGadget {
+    for (final s in widget.model.snaps) {
+      if (s.type == SnapType.gadget) return s;
+    }
+    return null;
+  }
+
+  /// Async-resolves the current gadget's per-channel base and caches it for
+  /// the inline indicator. Safe to call repeatedly; it no-ops if already
+  /// resolved for the same gadget+channel.
+  Future<void> _resolveGadgetBase() async {
+    final gadget = _currentGadget;
+    if (gadget == null) {
+      if (_gadgetBase != null || _gadgetBaseFor != null) {
+        setState(() {
+          _gadgetBase = null;
+          _gadgetBaseFor = null;
+        });
+      }
+      return;
+    }
+
+    final key = '${gadget.name}|${gadget.defaultChannel}';
+    if (key == _gadgetBaseFor) return; // already resolved for this combo
+    if (_resolvingGadgetBase) return;
+
+    _resolvingGadgetBase = true;
+    try {
+      final base = await _store.getBaseForChannel(
+          gadget.name, _arch, gadget.defaultChannel);
+      if (!mounted) return;
+      setState(() {
+        _gadgetBase = base;
+        _gadgetBaseFor = key;
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _gadgetBase = null; // couldn't resolve; no false indicator
+          _gadgetBaseFor = key;
+        });
+      }
+    } finally {
+      _resolvingGadgetBase = false;
+    }
   }
 
   Future<void> _seedRequiredSnaps() async {
@@ -120,25 +174,42 @@ class _SnapsPageState extends State<SnapsPage> {
   }
 
   Future<void> _onSnapAdded(SnapEntry entry, String? appBase) async {
+    // For app snaps, the base can differ per channel (e.g. console-conf:
+    // 24/* => core24, 26/* => core26). The channel-agnostic base passed in
+    // may be wrong, so resolve the base for the app's SELECTED channel.
+    String? resolvedAppBase = appBase;
+    if (entry.type == SnapType.app) {
+      setState(() => _busy = true);
+      try {
+        final perChannel = await _store.getBaseForChannel(
+            entry.name, _arch, entry.defaultChannel);
+        if (perChannel != null) resolvedAppBase = perChannel;
+      } catch (_) {
+        // Fall back to the passed base if per-channel resolution fails.
+      } finally {
+        if (mounted) setState(() => _busy = false);
+      }
+    }
+
     final toAdd = entry.type == SnapType.app
         ? entry.copyWith(
             presence: SnapPresence.optional,
-            appBase: appBase,
+            appBase: resolvedAppBase,
           )
         : entry;
     _insertSnap(toAdd);
 
-    if (entry.type == SnapType.app && appBase != null) {
+    if (entry.type == SnapType.app && resolvedAppBase != null) {
       final alreadyPresent = widget.model.snaps
-          .any((s) => s.type == SnapType.base && s.name == appBase);
-      final isModelBase = appBase == widget.model.base;
-
+          .any((s) => s.type == SnapType.base && s.name == resolvedAppBase);
+      final isModelBase = resolvedAppBase == widget.model.base;
       if (!alreadyPresent && !isModelBase) {
         setState(() => _busy = true);
         try {
-          final track = RegExp(r'(\d+)').firstMatch(appBase)?.group(1);
+          final track =
+              RegExp(r'(\d+)').firstMatch(resolvedAppBase)?.group(1);
           await _seedOne(
-            name: appBase,
+            name: resolvedAppBase,
             type: SnapType.base,
             preferTrack: track,
             autoAdded: true,
@@ -149,7 +220,7 @@ class _SnapsPageState extends State<SnapsPage> {
                 behavior: SnackBarBehavior.floating,
                 duration: const Duration(seconds: 6),
                 content: Text(
-                  'Added base snap "$appBase" automatically because '
+                  'Added base snap "$resolvedAppBase" automatically because '
                   '"${entry.name}" is built on it. It is placed before the '
                   'app so snapd processes it first during image build.',
                 ),
@@ -164,7 +235,7 @@ class _SnapsPageState extends State<SnapsPage> {
                 backgroundColor:
                     Theme.of(context).colorScheme.errorContainer,
                 content: Text(
-                  'Could not auto-add base "$appBase" needed by '
+                  'Could not auto-add base "$resolvedAppBase" needed by '
                   '"${entry.name}": $e',
                 ),
               ),
@@ -176,11 +247,16 @@ class _SnapsPageState extends State<SnapsPage> {
       }
     }
 
+    // Re-resolve the gadget base for the inline indicator (covers adding a
+    // gadget, or replacing one).
+    if (entry.type == SnapType.gadget) {
+      _resolveGadgetBase();
+    }
+
     _recomputeBasePresence();
   }
 
   void _removeSnap(SnapEntry entry) {
-    // Prevent removing a dependent base while an app still needs it.
     final isDependentBase =
         entry.type == SnapType.base && entry.name != widget.model.base;
     if (isDependentBase && _baseHasDependents(entry.name)) {
@@ -193,8 +269,6 @@ class _SnapsPageState extends State<SnapsPage> {
 
     widget.model.snaps.remove(entry);
 
-    // If we removed an app, auto-remove its base when that base is now
-    // orphaned AND was auto-added by us (never remove user-added bases).
     if (removedAppBase != null && removedAppBase != widget.model.base) {
       final base = _findBase(removedAppBase);
       if (base != null &&
@@ -208,6 +282,11 @@ class _SnapsPageState extends State<SnapsPage> {
     widget.onChanged();
     _recomputeBasePresence();
     setState(() {});
+
+    // If the gadget was removed, refresh the indicator.
+    if (entry.type == SnapType.gadget) {
+      _resolveGadgetBase();
+    }
   }
 
   SnapEntry? _findBase(String name) {
@@ -296,7 +375,6 @@ class _SnapsPageState extends State<SnapsPage> {
     if (changed) widget.onChanged();
   }
 
-  /// True if [baseName] is used by at least one app snap in the model.
   bool _baseHasDependents(String baseName) => widget.model.snaps.any(
         (s) => s.type == SnapType.app && s.appBase == baseName,
       );
@@ -312,8 +390,16 @@ class _SnapsPageState extends State<SnapsPage> {
 
   @override
   Widget build(BuildContext context) {
-    // Display snaps in the same canonical order the generated model
-    // file will use, so the on-screen list matches the output.
+    // Trigger a re-resolve if the cached gadget base is stale relative to the
+    // current gadget (e.g. after navigating back with a changed model base).
+    final gadget = _currentGadget;
+    final currentKey =
+        gadget == null ? null : '${gadget.name}|${gadget.defaultChannel}';
+    if (currentKey != _gadgetBaseFor && !_resolvingGadgetBase) {
+      WidgetsBinding.instance
+          .addPostFrameCallback((_) => _resolveGadgetBase());
+    }
+
     final snaps = AssertionBuilder.orderedSnaps(widget.model.snaps);
     return Stack(
       children: [
@@ -336,7 +422,9 @@ class _SnapsPageState extends State<SnapsPage> {
             ),
             const SizedBox(height: 16),
             _buildRequirementChips(context),
-            const SizedBox(height: 16),
+            const SizedBox(height: 12),
+            _buildGadgetBaseWarning(context),
+            const SizedBox(height: 4),
             if (_seedingBase)
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 8),
@@ -406,6 +494,135 @@ class _SnapsPageState extends State<SnapsPage> {
             ),
           ),
       ],
+    );
+  }
+
+  Future<void> _changeGadgetChannel(
+      SnapEntry gadget, String modelBase) async {
+    setState(() => _busy = true);
+    List<({String channel, String? base})> channels;
+    try {
+      channels = await _store.getChannelsWithBases(gadget.name, _arch);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _busy = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            behavior: SnackBarBehavior.floating,
+            content: Text('Could not load channels for "${gadget.name}": $e'),
+          ),
+        );
+      }
+      return;
+    }
+    if (mounted) setState(() => _busy = false);
+    if (!mounted) return;
+
+    final chosen = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('Choose a channel for "${gadget.name}"'),
+        content: SizedBox(
+          width: 460,
+          child: ListView(
+            shrinkWrap: true,
+            children: [
+              for (final c in channels)
+                ListTile(
+                  dense: true,
+                  leading: Icon(
+                    c.base == modelBase
+                        ? Icons.check_circle
+                        : (c.base == null
+                            ? Icons.help_outline
+                            : Icons.cancel),
+                    color: c.base == modelBase
+                        ? Theme.of(dialogContext).colorScheme.primary
+                        : Theme.of(dialogContext).hintColor,
+                  ),
+                  title: Text(c.channel),
+                  subtitle: Text(c.base == null
+                      ? 'base: unknown'
+                      : 'base: ${c.base}'
+                          '${c.base == modelBase ? "  (matches)" : ""}'),
+                  onTap: () => Navigator.pop(dialogContext, c.channel),
+                ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    );
+
+    if (chosen == null || chosen == gadget.defaultChannel) return;
+
+    // Update the gadget's channel in place.
+    final idx = widget.model.snaps.indexOf(gadget);
+    if (idx >= 0) {
+      widget.model.snaps[idx] = SnapEntry(
+        name: gadget.name,
+        id: gadget.id,
+        type: gadget.type,
+        defaultChannel: chosen,
+        presence: gadget.presence,
+        appBase: gadget.appBase,
+        autoAdded: gadget.autoAdded,
+      );
+      widget.onChanged();
+    }
+    // Re-resolve the banner against the new channel.
+    _gadgetBaseFor = null; // force re-resolution
+    await _resolveGadgetBase();
+    if (mounted) setState(() {});
+  }
+
+  /// Persistent inline indicator: shown when the current gadget's resolved
+  /// per-channel base does not match the model base.
+  Widget _buildGadgetBaseWarning(BuildContext context) {
+    final modelBase = widget.model.base;
+    final gadget = _currentGadget;
+    if (modelBase == null || gadget == null || _gadgetBase == null) {
+      return const SizedBox.shrink();
+    }
+    if (_gadgetBase == modelBase) {
+      return const SizedBox.shrink();
+    }
+
+    final theme = Theme.of(context);
+    return InkWell(
+      onTap: () => _changeGadgetChannel(gadget, modelBase),
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.errorContainer,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.warning_amber,
+                color: theme.colorScheme.onErrorContainer),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Gadget base mismatch: "${gadget.name}" '
+                '(${gadget.defaultChannel}) is built on "$_gadgetBase", but '
+                'the model base is "$modelBase". Tap to choose a channel '
+                'built on "$modelBase".',
+                style: TextStyle(color: theme.colorScheme.onErrorContainer),
+              ),
+            ),
+            Icon(Icons.chevron_right,
+                color: theme.colorScheme.onErrorContainer),
+          ],
+        ),
+      ),
     );
   }
 

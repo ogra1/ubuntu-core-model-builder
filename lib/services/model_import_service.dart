@@ -181,8 +181,18 @@ class ModelImportService {
         if (e.type != SnapType.app) continue;
         futures.add(() async {
           try {
-            final info = await _store.getSnapInfo(e.name, arch);
-            entries[i] = e.copyWith(appBase: info.base);
+            // Resolve the base for the app's SELECTED channel, since a snap
+            // can have different bases per channel (e.g. console-conf:
+            // 24/* => core24, 26/* => core26). Falls back to the
+            // channel-agnostic base if the per-channel lookup returns null.
+            final perChannel = await _store.getBaseForChannel(
+                e.name, arch, e.defaultChannel);
+            if (perChannel != null) {
+              entries[i] = e.copyWith(appBase: perChannel);
+            } else {
+              final info = await _store.getSnapInfo(e.name, arch);
+              entries[i] = e.copyWith(appBase: info.base);
+            }
           } catch (_) {
             warnings.add(
                 'Could not resolve base for "${e.name}"; dependent base '

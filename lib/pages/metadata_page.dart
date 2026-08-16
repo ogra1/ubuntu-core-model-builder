@@ -102,18 +102,32 @@ class _MetadataPageState extends State<MetadataPage> {
 
   Future<void> _onBaseChanged(String? newBase) async {
     if (newBase == null) return;
+    final oldBase = model.base;
     model.base = newBase;
     state.invalidateSignature();
+
+    // Remove the base snap seeded for the PREVIOUS model base, so repeatedly
+    // changing the base does not accumulate stale base snaps. Guard: never
+    // remove a base an app still depends on (appBase == oldBase), and never
+    // remove the new base itself.
+    if (oldBase != null && oldBase != newBase) {
+      final neededByApp = model.snaps.any(
+        (s) => s.type == SnapType.app && s.appBase == oldBase,
+      );
+      if (!neededByApp) {
+        model.snaps.removeWhere(
+          (s) => s.type == SnapType.base && s.name == oldBase,
+        );
+      }
+    }
+
     widget.onChanged();
     setState(() {});
 
     final arch = model.architecture.name;
     state.setBusy(true, message: 'Updating base snap...');
     try {
-      // 1. Always seed the new base snap if not already present (idempotent).
       await _ensureBaseSnap(newBase, arch);
-
-      // 2. Check the gadget: its base must match the new model base.
       await _checkGadgetBase(newBase, arch);
     } catch (e) {
       _error(context, 'Could not update base: $e');
@@ -173,8 +187,9 @@ class _MetadataPageState extends State<MetadataPage> {
 
     String? gadgetBase;
     try {
-      final info = await _store.getSnapInfo(gadget.name, arch);
-      gadgetBase = info.base;
+      // Per-channel base (the gadget may have different bases per track).
+      gadgetBase = await _store.getBaseForChannel(
+          gadget.name, arch, gadget.defaultChannel);
     } catch (_) {
       return; // can't resolve; skip the warning rather than false-alarm
     }
