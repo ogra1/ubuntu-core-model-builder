@@ -156,8 +156,6 @@ class _SnapSearchFieldState extends State<SnapSearchField> {
     try {
       final info = await _store.getSnapInfo(snap.name, widget.architecture,
           storeId: widget.storeId);
-      // TEMP DEBUG:
-      print('DEBUG channels for ${snap.name}: ${info.channels}');
       setState(() {
         _availableChannels =
             info.channels.isEmpty ? ['latest/stable'] : info.channels;

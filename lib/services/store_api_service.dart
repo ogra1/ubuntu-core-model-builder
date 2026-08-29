@@ -5,6 +5,19 @@ import '../models/store_snap.dart';
 /// Queries the public Snap Store API (api.snapcraft.io) with an explicit
 /// device architecture and, optionally, a brand store ID so brand-store snaps
 /// are returned.
+/// A component offered by a snap on a given channel, from the store's
+/// "resources" list (entries whose type starts with "component/").
+class SnapComponentOption {
+  final String name;
+  final String? description;
+  final String type; // e.g. component/kernel-modules, component/standard
+  const SnapComponentOption({
+    required this.name,
+    required this.type,
+    this.description,
+  });
+}
+
 class StoreApiService {
   static const _base = 'https://api.snapcraft.io/v2';
 
@@ -208,6 +221,60 @@ class StoreApiService {
       }
     }
     return null;
+  }
+
+  /// Returns the components available for [snapName] on [channel] and
+  /// [architecture], read from the store "resources" list. Only entries whose
+  /// type starts with "component/" are returned. Empty if none or on error.
+  Future<List<SnapComponentOption>> getComponentsForChannel(
+      String snapName, String architecture, String channel,
+      {String? storeId}) async {
+    final uri = Uri.parse(
+      '$_base/snaps/info/${Uri.encodeComponent(snapName)}'
+      '?fields=revision,resources',
+    );
+    final resp = await http.get(uri, headers: _headers(architecture, storeId));
+    if (resp.statusCode != 200) return const [];
+    final body = jsonDecode(resp.body) as Map<String, dynamic>;
+    final channelMap = body['channel-map'] as List<dynamic>? ?? const [];
+
+    for (final entry in channelMap) {
+      final m = entry as Map<String, dynamic>;
+      final ch = m['channel'] as Map<String, dynamic>?;
+      if (ch == null) continue;
+      final arch = ch['architecture'] as String?;
+      if (arch != null && arch != architecture) continue;
+
+      // Match the requested channel (canonical track/risk or name form).
+      final track = ch['track'] as String? ?? 'latest';
+      final risk = ch['risk'] as String? ?? 'stable';
+      final canonical = '$track/$risk';
+      final nameField = ch['name'] as String?;
+      final matches = channel == canonical ||
+          channel == risk ||
+          channel == nameField;
+      if (!matches) continue;
+
+      final resources = m['resources'] as List<dynamic>? ?? const [];
+      final comps = <SnapComponentOption>[];
+      final seen = <String>{};
+      for (final r in resources) {
+        if (r is! Map) continue;
+        final rm = r.cast<String, dynamic>();
+        final type = (rm['type'] ?? '').toString();
+        if (!type.startsWith('component/')) continue;
+        final name = (rm['name'] ?? '').toString();
+        if (name.isEmpty || !seen.add(name)) continue;
+        comps.add(SnapComponentOption(
+          name: name,
+          type: type,
+          description: rm['description']?.toString(),
+        ));
+      }
+      comps.sort((a, b) => a.name.compareTo(b.name));
+      return comps;
+    }
+    return const [];
   }
 
   static int _channelCompare(String a, String b) {

@@ -777,122 +777,29 @@ class _SnapsPageState extends State<SnapsPage> {
   }
 
   Future<void> _editComponents(SnapEntry snap) async {
-    // Work on a mutable copy of the components map.
-    final working = Map<String, String>.from(snap.components);
+    setState(() => _busy = true);
+    List<SnapComponentOption> available;
+    try {
+      available = await _store.getComponentsForChannel(
+          snap.name, _arch, snap.defaultChannel, storeId: _storeId);
+    } catch (_) {
+      available = const [];
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+    if (!mounted) return;
 
     final result = await showDialog<Map<String, String>>(
       context: context,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            final nameController = TextEditingController();
-            String newPresence = 'optional';
-            return AlertDialog(
-              title: Text('Components for "${snap.name}"'),
-              content: SizedBox(
-                width: 480,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Add kernel components by name and choose their '
-                      'presence. Component names are specific to the kernel '
-                      'snap (e.g. nvidia-590-uda-ko).',
-                    ),
-                    const SizedBox(height: 12),
-                    if (working.isEmpty)
-                      const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 8),
-                        child: Text('No components.'),
-                      )
-                    else
-                      ...working.entries.map((e) => Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 2),
-                            child: Row(
-                              children: [
-                                Expanded(child: Text(e.key)),
-                                DropdownButton<String>(
-                                  value: e.value,
-                                  items: const [
-                                    DropdownMenuItem(
-                                        value: 'optional',
-                                        child: Text('optional')),
-                                    DropdownMenuItem(
-                                        value: 'required',
-                                        child: Text('required')),
-                                  ],
-                                  onChanged: (v) => setDialogState(
-                                      () => working[e.key] = v ?? 'optional'),
-                                ),
-                                IconButton(
-                                  icon: const Icon(Icons.delete_outline),
-                                  onPressed: () => setDialogState(
-                                      () => working.remove(e.key)),
-                                ),
-                              ],
-                            ),
-                          )),
-                    const Divider(),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: TextField(
-                            controller: nameController,
-                            decoration: const InputDecoration(
-                              labelText: 'New component name',
-                              isDense: true,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        DropdownButton<String>(
-                          value: newPresence,
-                          items: const [
-                            DropdownMenuItem(
-                                value: 'optional', child: Text('optional')),
-                            DropdownMenuItem(
-                                value: 'required', child: Text('required')),
-                          ],
-                          onChanged: (v) => setDialogState(
-                              () => newPresence = v ?? 'optional'),
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.add),
-                          tooltip: 'Add',
-                          onPressed: () {
-                            final n = nameController.text.trim();
-                            if (n.isNotEmpty) {
-                              setDialogState(() {
-                                working[n] = newPresence;
-                                nameController.clear();
-                              });
-                            }
-                          },
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(dialogContext),
-                  child: const Text('Cancel'),
-                ),
-                ElevatedButton(
-                  onPressed: () => Navigator.pop(dialogContext, working),
-                  child: const Text('Save'),
-                ),
-              ],
-            );
-          },
-        );
-      },
+      builder: (_) => _ComponentEditorDialog(
+        snapName: snap.name,
+        channel: snap.defaultChannel,
+        available: available,
+        initial: Map<String, String>.from(snap.components),
+      ),
     );
 
-    if (result == null) return; // cancelled
-
+    if (result == null) return;
     final idx = widget.model.snaps.indexOf(snap);
     if (idx >= 0) {
       widget.model.snaps[idx] = snap.copyWith(components: result);
@@ -1015,3 +922,207 @@ class _SnapsPageState extends State<SnapsPage> {
     );
   }
 }
+
+
+/// Dedicated stateful dialog for editing a kernel snap's components. Keeping
+/// the selection state in real State (not StatefulBuilder locals) ensures the
+/// dropdown selections and presence choices persist across rebuilds.
+class _ComponentEditorDialog extends StatefulWidget {
+  final String snapName;
+  final String channel;
+  final List<SnapComponentOption> available;
+  final Map<String, String> initial;
+
+  const _ComponentEditorDialog({
+    required this.snapName,
+    required this.channel,
+    required this.available,
+    required this.initial,
+  });
+
+  @override
+  State<_ComponentEditorDialog> createState() =>
+      _ComponentEditorDialogState();
+}
+
+class _ComponentEditorDialogState extends State<_ComponentEditorDialog> {
+  late Map<String, String> _working;
+  String? _selectedToAdd;
+  String _newPresence = 'optional';
+
+  @override
+  void initState() {
+    super.initState();
+    _working = Map<String, String>.from(widget.initial);
+    _selectedToAdd = _firstRemaining();
+  }
+
+
+  List<SnapComponentOption> get _remaining => widget.available
+      .where((c) => !_working.containsKey(c.name))
+      .toList();
+
+  String? _descriptionFor(String name) {
+    for (final c in widget.available) {
+      if (c.name == name) return c.description;
+    }
+    return null;
+  }
+
+  String? _firstRemaining() {
+    final r = _remaining;
+    return r.isNotEmpty ? r.first.name : null;
+  }
+
+  void _addSelected() {
+    final sel = _selectedToAdd;
+    if (sel == null) return;
+    setState(() {
+      _working[sel] = _newPresence;
+      _selectedToAdd = _firstRemaining();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final remaining = _remaining;
+    // Keep _selectedToAdd valid against the current remaining list.
+    if (_selectedToAdd != null &&
+        !remaining.any((c) => c.name == _selectedToAdd)) {
+      _selectedToAdd = remaining.isNotEmpty ? remaining.first.name : null;
+    }
+
+    return AlertDialog(
+      title: Text('Components for "${widget.snapName}" (${widget.channel})'),
+      content: SizedBox(
+        width: 560,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (widget.available.isEmpty)
+              Text(
+                'No components are published for this kernel on '
+                '"${widget.channel}".',
+                style: Theme.of(context).textTheme.bodySmall,
+              )
+            else
+              Text(
+                '${widget.available.length} component(s) available on '
+                '"${widget.channel}".',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            const SizedBox(height: 12),
+            if (_working.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 8),
+                child: Text('No components added.'),
+              )
+            else
+              ..._working.entries.map((e) => Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 2),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Tooltip(
+                            message: _descriptionFor(e.key) ?? e.key,
+                            waitDuration:
+                                const Duration(milliseconds: 400),
+                            child: Text(e.key),
+                          ),
+                        ),
+                        DropdownButton<String>(
+                          value: e.value,
+                          items: const [
+                            DropdownMenuItem(
+                                value: 'optional', child: Text('optional')),
+                            DropdownMenuItem(
+                                value: 'required', child: Text('required')),
+                          ],
+                          onChanged: (v) => setState(
+                              () => _working[e.key] = v ?? 'optional'),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.delete_outline),
+                          onPressed: () =>
+                              setState(() => _working.remove(e.key)),
+                        ),
+                      ],
+                    ),
+                  )),
+            const Padding(
+              padding: EdgeInsets.only(top: 16, bottom: 8),
+              child: Divider(height: 1),
+            ),
+            if (remaining.isNotEmpty)
+              Row(
+                children: [
+                  Expanded(
+                    child: DropdownButtonFormField<String>(
+                      value: _selectedToAdd,
+                      isExpanded: true,
+                      decoration: const InputDecoration(
+                        labelText: 'Available component',
+                        isDense: true,
+                      ),
+                      items: remaining
+                          .map((c) => DropdownMenuItem(
+                                value: c.name,
+                                child: Tooltip(
+                                  message: c.description ?? c.name,
+                                  waitDuration:
+                                      const Duration(milliseconds: 400),
+                                  child: Text(c.name,
+                                      overflow: TextOverflow.ellipsis),
+                                ),
+                              ))
+                          .toList(),
+                      onChanged: (v) => setState(() => _selectedToAdd = v),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  DropdownButton<String>(
+                    value: _newPresence,
+                    items: const [
+                      DropdownMenuItem(
+                          value: 'optional', child: Text('optional')),
+                      DropdownMenuItem(
+                          value: 'required', child: Text('required')),
+                    ],
+                    onChanged: (v) =>
+                        setState(() => _newPresence = v ?? 'optional'),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.add),
+                    tooltip: 'Add selected',
+                    onPressed: _selectedToAdd == null ? null : _addSelected,
+                  ),
+                ],
+              ),
+            if (remaining.isNotEmpty && _selectedToAdd != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 4, left: 4, bottom: 4),
+                child: Text(
+                  _descriptionFor(_selectedToAdd!) ?? 'No description.',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).hintColor,
+                      ),
+                ),
+              ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          onPressed: () => Navigator.pop(context, _working),
+          child: const Text('Save'),
+        ),
+      ],
+    );
+  }
+}
+
