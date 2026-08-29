@@ -283,11 +283,12 @@ class ModelImportService {
             // 24/* => core24, 26/* => core26). Falls back to the
             // channel-agnostic base if the per-channel lookup returns null.
             final perChannel = await _store.getBaseForChannel(
-                e.name, arch, e.defaultChannel);
+                e.name, arch, e.defaultChannel, storeId: model.store);
             if (perChannel != null) {
               entries[i] = e.copyWith(appBase: perChannel);
             } else {
-              final info = await _store.getSnapInfo(e.name, arch);
+              final info = await _store.getSnapInfo(e.name, arch,
+                  storeId: model.store);
               entries[i] = e.copyWith(appBase: info.base);
             }
           } catch (_) {

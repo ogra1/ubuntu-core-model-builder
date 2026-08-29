@@ -10,15 +10,12 @@ class BrandStore {
   final String? name;
   final List<String> roles;
   const BrandStore({required this.id, this.name, this.roles = const []});
-
   bool get isGlobal => id == 'ubuntu';
-
   Map<String, dynamic> toJson() => {
         'id': id,
         'name': name,
         'roles': roles,
       };
-
   factory BrandStore.fromJson(Map<String, dynamic> j) => BrandStore(
         id: j['id'] as String,
         name: j['name'] as String?,
@@ -27,6 +24,14 @@ class BrandStore {
                 .toList() ??
             const [],
       );
+}
+
+/// A snap listed in a brand store's catalog (id + name only; type/base/
+/// channels are resolved separately via the store info API).
+class StoreCatalogSnap {
+  final String id;
+  final String name;
+  const StoreCatalogSnap({required this.id, required this.name});
 }
 
 class SurlAuthException implements Exception {
@@ -49,12 +54,18 @@ class SurlService {
   /// it on logout) reference one source of truth.
   static const prefCachedStores = 'metadata.cachedStores';
 
-
-  // The auth identity this app owns in surl. The user never manages this.
   static const _authName = 'ubuntu-core-model-builder';
   static const _server = 'production';
   static const _accountUrl =
       'https://dashboard.snapcraft.io/dev/api/account';
+
+  // Permissions the web-login token must carry. package_access covers the
+  // account/store list; store_admin is required for the store catalog
+  // endpoint (listing snaps in a brand store). Individual queries use only
+  // the permission they need (package_access), but the token must be minted
+  // with both.
+  static const _loginPermissions = ['package_access', 'store_admin'];
+  static const _queryPermission = 'package_access';
 
   // NOTE: "_pyVer" is coupled to the python3.12-minimal stage-package in
   // snapcraft.yaml AND the venv built against it. If you bump the Python
@@ -65,8 +76,6 @@ class SurlService {
   bool get _inSnap => (Platform.environment['SNAP'] ?? '').isNotEmpty;
   String get _snap => Platform.environment['SNAP'] ?? '';
 
-  /// Stable directory where surl writes its <auth>.surl credential file.
-  /// Prefer snapd's SNAP_USER_COMMON if set; otherwise a per-user dir.
   String get _authDir {
     final fromSnapd = Platform.environment['SNAP_USER_COMMON'];
     if (fromSnapd != null && fromSnapd.isNotEmpty) return fromSnapd;
@@ -74,12 +83,8 @@ class SurlService {
     return '$home/.local/share/ubuntu-core-model-builder/surl';
   }
 
-  /// Environment for invoking bundled surl. Unlike host tools (which get
-  /// their library env stripped), bundled surl's Python extensions NEED the
-  /// snap's libraries, so we add LD_LIBRARY_PATH back here only. We also set
-  /// PYTHONPATH, SSL cert paths, and the credential dir.
   Map<String, String> _surlEnv() {
-    final env = HostEnv.sanitized; // starts from host env minus lib vars
+    final env = HostEnv.sanitized;
     if (_inSnap) {
       final venv = '$_snap/usr/share/surl-venv';
       env['PYTHONPATH'] = '$venv/lib/$_pyVer/site-packages';
@@ -93,8 +98,6 @@ class SurlService {
     return env;
   }
 
-  /// (executable, argsPrefix) to run surl. In the snap: staged python3.12 on
-  /// surl_cli.py. In dev (no $SNAP): host `surl`.
   (String, List<String>) _invocation() {
     if (_inSnap) {
       return (
@@ -111,52 +114,41 @@ class SurlService {
     } catch (_) {}
   }
 
-  /// Whether an auth token already exists for our identity (avoids launching
-  /// web-login when we are already authenticated).
   Future<bool> hasCredential() async {
     final f = File('$_authDir/$_authName.surl');
     return f.exists();
   }
 
-  /// Lists brand stores from the account endpoint. Throws:
-  ///  - [SurlUnavailableException] if surl can't be executed,
-  ///  - [SurlAuthException] if not authenticated / token invalid.
   Future<List<BrandStore>> listStores() async {
     await _ensureAuthDir();
     final (exe, prefix) = _invocation();
-
     final ProcessResult r;
     try {
       r = await Process.run(
         exe,
-        [...prefix, '-a', _authName, '-s', _server, _accountUrl],
+        [...prefix, '-a', _authName, '-p', _queryPermission, '-s', _server,
+            _accountUrl],
         environment: _surlEnv(),
         includeParentEnvironment: false,
       );
     } on ProcessException catch (e) {
       throw SurlUnavailableException('Could not run surl: ${e.message}');
     }
-
     final out = (r.stdout as String?)?.trim() ?? '';
     final err = (r.stderr as String?)?.trim() ?? '';
-
     if (r.exitCode != 0) {
-      // Non-zero usually means missing/expired token → needs web-login.
       throw SurlAuthException(err.isNotEmpty ? err : 'Not authenticated.');
     }
     if (out.isEmpty) {
       throw SurlAuthException('Empty response from surl (login may be needed).');
     }
-
     Map<String, dynamic> data;
     try {
       data = jsonDecode(out) as Map<String, dynamic>;
     } catch (_) {
-      // Non-JSON output typically means an auth/error message, not data.
       throw SurlAuthException(
           'Unexpected surl output (login may be needed):\n$out');
     }
-
     final stores = data['stores'] as List<dynamic>? ?? const [];
     return stores
         .whereType<Map>()
@@ -175,29 +167,85 @@ class SurlService {
         .toList();
   }
 
-  /// Interactive web-login. surl opens the browser and blocks until SSO
-  /// completes, then returns account JSON. No terminal is needed because the
-  /// interaction happens in the browser, not on a tty.
-  ///
-  /// Returns nothing; on success surl has stored the credential. Throws
-  /// [SurlUnavailableException] if surl can't be run, or [SurlAuthException]
-  /// if login did not complete successfully.
-  Future<void> webLogin() async {
+  /// Lists the snaps in a brand store's catalog. Requires an authenticated
+  /// token (minted with package_access + store_admin); the query itself uses
+  /// package_access. Throws [SurlAuthException] if not authenticated.
+  Future<List<StoreCatalogSnap>> listStoreSnaps(String storeId) async {
     await _ensureAuthDir();
     final (exe, prefix) = _invocation();
-
+    final url =
+        'https://dashboard.snapcraft.io/api/v2/stores/$storeId/snaps';
     final ProcessResult r;
     try {
       r = await Process.run(
         exe,
-        [...prefix, '-a', _authName, '--web-login', '-s', _server],
+        [
+          ...prefix,
+          '-a', _authName,
+          '-p', _queryPermission,
+          '-s', _server,
+          '-X', 'GET',
+          url,
+        ],
         environment: _surlEnv(),
         includeParentEnvironment: false,
       );
     } on ProcessException catch (e) {
       throw SurlUnavailableException('Could not run surl: ${e.message}');
     }
+    final out = (r.stdout as String?)?.trim() ?? '';
+    final err = (r.stderr as String?)?.trim() ?? '';
+    if (r.exitCode != 0) {
+      throw SurlAuthException(err.isNotEmpty ? err : 'Not authenticated.');
+    }
+    if (out.isEmpty) {
+      throw SurlAuthException('Empty catalog response (login may be needed).');
+    }
+    Map<String, dynamic> data;
+    try {
+      data = jsonDecode(out) as Map<String, dynamic>;
+    } catch (_) {
+      throw SurlAuthException(
+          'Unexpected catalog output (login may be needed):\n$out');
+    }
+    final snaps = data['snaps'] as List<dynamic>? ?? const [];
+    return snaps
+        .whereType<Map>()
+        .map((e) {
+          final m = e.cast<String, dynamic>();
+          return StoreCatalogSnap(
+            id: (m['id'] ?? '') as String,
+            name: (m['name'] ?? '') as String,
+          );
+        })
+        .where((s) => s.name.isNotEmpty)
+        .toList();
+  }
 
+  /// Interactive web-login. Mints a token with the required permissions
+  /// (package_access + store_admin) so both store listing and catalog
+  /// browsing work. surl opens the browser and blocks until SSO completes.
+  Future<void> webLogin() async {
+    await _ensureAuthDir();
+    final (exe, prefix) = _invocation();
+    final permArgs = <String>[];
+    for (final p in _loginPermissions) {
+      permArgs
+        ..add('-p')
+        ..add(p);
+    }
+    final ProcessResult r;
+    try {
+      r = await Process.run(
+        exe,
+        [...prefix, '-a', _authName, ...permArgs, '--web-login', '-s',
+            _server],
+        environment: _surlEnv(),
+        includeParentEnvironment: false,
+      );
+    } on ProcessException catch (e) {
+      throw SurlUnavailableException('Could not run surl: ${e.message}');
+    }
     if (r.exitCode != 0) {
       final err = (r.stderr as String?)?.trim() ?? '';
       final out = (r.stdout as String?)?.trim() ?? '';

@@ -1,9 +1,13 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:yaru/yaru.dart';
 import '../models/model_assertion.dart';
 import '../models/snap_entry.dart';
 import '../services/assertion_builder.dart';
 import '../services/store_api_service.dart';
+import '../services/surl_service.dart';
 import '../widgets/snap_search_field.dart';
 
 class SnapsPage extends StatefulWidget {
@@ -30,12 +34,26 @@ class _SnapsPageState extends State<SnapsPage> {
   String? _gadgetBaseFor; // "name|channel" the cached base was resolved for
   bool _resolvingGadgetBase = false;
 
+  // Brand-store catalog (lazy-fetched on first search, cached per
+  // store for the session). Null until fetched.
+  List<StoreCatalogSnap>? _catalog;
+  String? _catalogForStore;
+  bool _fetchingCatalog = false;
+  String? _storeName; // resolved display name for _storeId
+  final SurlService _surl = SurlService();
+  // Session cache: storeId -> catalog.
+  static final Map<String, List<StoreCatalogSnap>> _catalogCache = {};
+
   String get _arch => widget.model.architecture.name;
+  String? get _storeId => widget.model.store;
+  bool get _isBrandStore =>
+      _storeId != null && _storeId!.isNotEmpty && _storeId != 'ubuntu';
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await _loadStoreName();
       await _seedRequiredSnaps();
       _resolveGadgetBase();
     });
@@ -70,7 +88,7 @@ class _SnapsPageState extends State<SnapsPage> {
     _resolvingGadgetBase = true;
     try {
       final base = await _store.getBaseForChannel(
-          gadget.name, _arch, gadget.defaultChannel);
+          gadget.name, _arch, gadget.defaultChannel, storeId: _storeId);
       if (!mounted) return;
       setState(() {
         _gadgetBase = base;
@@ -86,6 +104,110 @@ class _SnapsPageState extends State<SnapsPage> {
     } finally {
       _resolvingGadgetBase = false;
     }
+  }
+
+  Future<void> _loadStoreName() async {
+    if (!_isBrandStore) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(SurlService.prefCachedStores);
+      if (raw == null || raw.isEmpty) return;
+      final list = jsonDecode(raw) as List<dynamic>;
+      for (final e in list) {
+        final bs = BrandStore.fromJson(e as Map<String, dynamic>);
+        if (bs.id == _storeId) {
+          if (mounted) setState(() => _storeName = bs.name);
+          return;
+        }
+      }
+    } catch (_) {}
+  }
+
+  /// Lazily fetches the brand-store catalog on first need, with a
+  /// store-admin disclosure + web-login prompt if not authenticated. Cached
+  /// per store for the session. No-op for the global store.
+  Future<void> _ensureCatalog() async {
+    if (!_isBrandStore) return;
+    final storeId = _storeId!;
+    if (_catalogForStore == storeId && _catalog != null) return;
+
+    // Session cache hit.
+    final cached = _catalogCache[storeId];
+    if (cached != null) {
+      setState(() {
+        _catalog = cached;
+        _catalogForStore = storeId;
+      });
+      return;
+    }
+
+    if (_fetchingCatalog) return;
+    setState(() => _fetchingCatalog = true);
+    try {
+      List<StoreCatalogSnap> snaps;
+      try {
+        snaps = await _surl.listStoreSnaps(storeId);
+      } on SurlAuthException {
+        // Not authenticated (or token lacks the permissions). Disclose and
+        // offer to sign in with the required scope.
+        final ok = await _showStoreAdminDisclosure();
+        if (ok != true) {
+          return; // user declined; leave catalog unfetched
+        }
+        await _surl.webLogin();
+        snaps = await _surl.listStoreSnaps(storeId);
+      }
+      _catalogCache[storeId] = snaps;
+      if (!mounted) return;
+      setState(() {
+        _catalog = snaps;
+        _catalogForStore = storeId;
+      });
+    } on SurlUnavailableException catch (e) {
+      _errorSnack('Brand-store browsing unavailable: $e');
+    } on SurlAuthException catch (e) {
+      _errorSnack('Store sign-in failed: $e');
+    } catch (e) {
+      _errorSnack('Could not load store catalog: $e');
+    } finally {
+      if (mounted) setState(() => _fetchingCatalog = false);
+    }
+  }
+
+  Future<bool?> _showStoreAdminDisclosure() {
+    return showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Sign in to browse this brand store'),
+        content: const Text(
+          'Browsing snaps in a brand store requires signing in with '
+          '"store-admin" permission. This grants administrative access to '
+          'your stores; the app uses it only to list this store\'s snaps.\n\n'
+          'Sign in now?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Sign in'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _errorSnack(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: Theme.of(context).colorScheme.errorContainer,
+        content: Text(msg),
+      ),
+    );
   }
 
   Future<void> _seedRequiredSnaps() async {
@@ -137,7 +259,7 @@ class _SnapsPageState extends State<SnapsPage> {
     String? preferTrack,
     bool autoAdded = false,
   }) async {
-    final info = await _store.getSnapInfo(name, _arch);
+    final info = await _store.getSnapInfo(name, _arch, storeId: _storeId);
     String channel = 'latest/stable';
     if (preferTrack != null) {
       channel = info.channels.firstWhere(
@@ -182,7 +304,7 @@ class _SnapsPageState extends State<SnapsPage> {
       setState(() => _busy = true);
       try {
         final perChannel = await _store.getBaseForChannel(
-            entry.name, _arch, entry.defaultChannel);
+            entry.name, _arch, entry.defaultChannel, storeId: _storeId);
         if (perChannel != null) resolvedAppBase = perChannel;
       } catch (_) {
         // Fall back to the passed base if per-channel resolution fails.
@@ -409,6 +531,7 @@ class _SnapsPageState extends State<SnapsPage> {
             Text('Snaps', style: Theme.of(context).textTheme.headlineSmall),
             const SizedBox(height: 8),
             Text(
+              '${_isBrandStore ? "Brand store: ${_storeName ?? _storeId}. " : ""}'
               'Searching the store for architecture "$_arch". A model '
               'requires a kernel, gadget, snapd, and a base snap. When you '
               'add an app snap built on a different base, that base is added '
@@ -466,7 +589,33 @@ class _SnapsPageState extends State<SnapsPage> {
               onSnapSelected: _onSnapAdded,
               modelBase: widget.model.base,
               architecture: _arch,
+              storeId: _storeId,
+              catalog: _isBrandStore ? _catalog : null,
             ),
+            if (_isBrandStore && _catalog == null)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: _fetchingCatalog
+                    ? const Row(
+                        children: [
+                          SizedBox(
+                            width: 16,
+                            height: 16,
+                            child:
+                                CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                          SizedBox(width: 12),
+                          Text('Loading brand store catalog...'),
+                        ],
+                      )
+                    : OutlinedButton.icon(
+                        onPressed: _ensureCatalog,
+                        icon: const Icon(Icons.cloud_download_outlined),
+                        label: Text(
+                            'Load "${_storeName ?? _storeId}" store '
+                            'catalog to search'),
+                      ),
+              ),
             const SizedBox(height: 24),
             if (snaps.isEmpty)
               Center(
@@ -502,7 +651,8 @@ class _SnapsPageState extends State<SnapsPage> {
     setState(() => _busy = true);
     List<({String channel, String? base})> channels;
     try {
-      channels = await _store.getChannelsWithBases(gadget.name, _arch);
+      channels = await _store.getChannelsWithBases(gadget.name, _arch,
+          storeId: _storeId);
     } catch (e) {
       if (mounted) {
         setState(() => _busy = false);

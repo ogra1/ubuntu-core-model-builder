@@ -3,24 +3,32 @@ import 'package:http/http.dart' as http;
 import '../models/store_snap.dart';
 
 /// Queries the public Snap Store API (api.snapcraft.io) with an explicit
-/// device architecture, so we can find snaps (e.g. pi-kernel, pi) for an
-/// architecture different from the host running this app.
+/// device architecture and, optionally, a brand store ID so brand-store snaps
+/// are returned.
 class StoreApiService {
   static const _base = 'https://api.snapcraft.io/v2';
 
-  Map<String, String> _headers(String architecture) => {
-        'Snap-Device-Architecture': architecture,
-        'Snap-Device-Series': '16',
-      };
+  static const prefCachedStores = 'metadata.cachedStores';
 
-  /// Search snaps for a given architecture.
-  /// results[] shape: name, snap-id, revision:{type}, snap:{title,summary}.
-  Future<List<StoreSnap>> findSnaps(String query, String architecture) async {
+  Map<String, String> _headers(String architecture, String? storeId) {
+    final h = <String, String>{
+      'Snap-Device-Architecture': architecture,
+      'Snap-Device-Series': '16',
+    };
+    // Scope to a brand store when one is given (and not the global store).
+    if (storeId != null && storeId.isNotEmpty && storeId != 'ubuntu') {
+      h['Snap-Device-Store'] = storeId;
+    }
+    return h;
+  }
+
+  Future<List<StoreSnap>> findSnaps(String query, String architecture,
+      {String? storeId}) async {
     final uri = Uri.parse(
       '$_base/snaps/find?q=${Uri.encodeQueryComponent(query)}'
       '&fields=title,summary,type',
     );
-    final resp = await http.get(uri, headers: _headers(architecture));
+    final resp = await http.get(uri, headers: _headers(architecture, storeId));
     if (resp.statusCode != 200) {
       throw Exception('Store search failed (${resp.statusCode}): ${resp.body}');
     }
@@ -44,22 +52,13 @@ class StoreApiService {
     return out;
   }
 
-  /// Get detailed info (channel map, snap-id, and per-architecture base) for
-  /// a snap on a given architecture.
-  ///
-  /// The channel-map entries carry the interesting per-revision data:
-  ///   { "base": "core24",
-  ///     "type": "app",
-  ///     "channel": { "architecture": <arch>, "name": "...",
-  ///                  "track": "...", "risk": "..." } }
-  /// The base can differ per architecture/channel, so we read it from the
-  /// entries matching the requested architecture.
-  Future<StoreSnap> getSnapInfo(String name, String architecture) async {
+  Future<StoreSnap> getSnapInfo(String name, String architecture,
+      {String? storeId}) async {
     final uri = Uri.parse(
       '$_base/snaps/info/${Uri.encodeComponent(name)}'
       '?fields=snap-id,title,summary,type,revision,base',
     );
-    final resp = await http.get(uri, headers: _headers(architecture));
+    final resp = await http.get(uri, headers: _headers(architecture, storeId));
     if (resp.statusCode != 200) {
       throw Exception(
           'Store info for "$name" failed (${resp.statusCode}): ${resp.body}');
@@ -78,19 +77,14 @@ class StoreApiService {
       final m = entry as Map<String, dynamic>;
       final ch = m['channel'] as Map<String, dynamic>?;
       final arch = ch?['architecture'] as String?;
-
-      // Only consider entries for the requested architecture.
       if (arch != null && arch != architecture) continue;
 
-      // Type (per-revision or per-entry).
       final revision = m['revision'];
       if (revision is Map<String, dynamic>) {
         typeFromMap ??= revision['type'] as String?;
       }
       typeFromMap ??= m['type'] as String?;
 
-      // Base for this architecture. Prefer the value on a stable channel,
-      // but fall back to the first arch-matching entry.
       final entryBase = m['base'] as String?;
       if (entryBase != null) {
         baseForArch ??= entryBase;
@@ -100,7 +94,6 @@ class StoreApiService {
         }
       }
 
-      // Channel name in canonical track/risk form.
       if (ch != null) {
         final track = ch['track'] as String? ?? 'latest';
         final risk = ch['risk'] as String? ?? 'stable';
@@ -117,12 +110,6 @@ class StoreApiService {
     var resolvedBase = baseStablePreferred ?? baseForArch;
 
     final resolvedType = (snap['type'] ?? typeFromMap) as String?;
-    // A null base on an app snap means the original "core" base: it predates
-    // the base concept, so snaps built on it declare no base. Explicit bases
-    // like "bare", "core18", "core24" come through non-null and are used
-    // as-is. Non-app snaps (base/kernel/gadget/snapd) legitimately have a
-    // null base and must NOT be given a fabricated one (e.g. the "bare" and
-    // "coreXX" base snaps themselves report base: null).
     if (resolvedBase == null &&
         (resolvedType == null || resolvedType == 'app')) {
       resolvedBase = 'core';
@@ -139,26 +126,14 @@ class StoreApiService {
     );
   }
 
-  /// Returns the base for a snap on a SPECIFIC channel/architecture, read
-  /// from the matching channel-map entry. Different channels of a snap can
-  /// have different bases (e.g. a gadget on 24/stable => core24 but on
-  /// 26/stable => core26), so callers that care about the base for the
-  /// channel they will actually use must resolve it per-channel rather than
-  /// relying on getSnapInfo's channel-agnostic base.
-  ///
-  /// [channel] is in canonical "track/risk" form (e.g. "26/stable").
-  /// Returns null if no matching entry or no base is found.
-  /// Returns the list of (channel, base) pairs for a snap on the given
-  /// architecture, from the channel-map. Channel is canonical "track/risk";
-  /// base may be null (e.g. latest/* channels). Deduplicated by channel,
-  /// preserving the channel sort order used elsewhere.
   Future<List<({String channel, String? base})>> getChannelsWithBases(
-      String name, String architecture) async {
+      String name, String architecture,
+      {String? storeId}) async {
     final uri = Uri.parse(
       '$_base/snaps/info/${Uri.encodeComponent(name)}'
       '?fields=base,revision',
     );
-    final resp = await http.get(uri, headers: _headers(architecture));
+    final resp = await http.get(uri, headers: _headers(architecture, storeId));
     if (resp.statusCode != 200) return const [];
     final body = jsonDecode(resp.body) as Map<String, dynamic>;
     final channelMap = body['channel-map'] as List<dynamic>? ?? const [];
@@ -175,9 +150,12 @@ class StoreApiService {
       final track = ch['track'] as String? ?? 'latest';
       final risk = ch['risk'] as String? ?? 'stable';
       final chanName = ch['name'] as String?;
+      // Always use canonical 'track/risk' (including 'latest/stable') to
+      // stay consistent with getSnapInfo's defaultChannel and
+      // getBaseForChannel's matching.
       final canonical = (chanName != null && chanName.contains('/'))
           ? chanName
-          : (track == 'latest' ? risk : '$track/$risk');
+          : '$track/$risk';
 
       if (seen.add(canonical)) {
         result.add((channel: canonical, base: m['base'] as String?));
@@ -188,12 +166,13 @@ class StoreApiService {
   }
 
   Future<String?> getBaseForChannel(
-      String name, String architecture, String channel) async {
+      String name, String architecture, String channel,
+      {String? storeId}) async {
     final uri = Uri.parse(
       '$_base/snaps/info/${Uri.encodeComponent(name)}'
       '?fields=base,revision',
     );
-    final resp = await http.get(uri, headers: _headers(architecture));
+    final resp = await http.get(uri, headers: _headers(architecture, storeId));
     if (resp.statusCode != 200) return null;
     final body = jsonDecode(resp.body) as Map<String, dynamic>;
     final channelMap = body['channel-map'] as List<dynamic>? ?? const [];
@@ -207,14 +186,24 @@ class StoreApiService {
 
       final track = ch['track'] as String? ?? 'latest';
       final risk = ch['risk'] as String? ?? 'stable';
-      final composed = track == 'latest' ? risk : '$track/$risk';
       final nameField = ch['name'] as String?;
 
-      // Match either the canonical composed form or the channel's own name.
-      if (composed == channel ||
-          nameField == channel ||
-          // Also accept a bare-risk channel matching a latest/<risk>.
-          (track == 'latest' && risk == channel)) {
+      // Build all the forms this channel could be referenced by, so we match
+      // whatever defaultChannel we stored. Note getSnapInfo stores the
+      // canonical 'track/risk' form (e.g. 'latest/stable'), so we MUST accept
+      // that here — the previous code collapsed 'latest/<risk>' to bare
+      // '<risk>' and therefore missed 'latest/stable'.
+      final canonical = '$track/$risk';           // e.g. latest/stable
+      final bareRisk = risk;                        // e.g. stable
+      final composedName =
+          (nameField != null && nameField.contains('/'))
+              ? nameField
+              : canonical;
+
+      if (channel == canonical ||
+          channel == bareRisk ||
+          channel == nameField ||
+          channel == composedName) {
         return m['base'] as String?;
       }
     }

@@ -15,6 +15,39 @@ platforms:
   amd64:
   arm64:
 
+lint:
+  ignore:
+    - classic:
+      - usr/lib/x86_64-linux-gnu/dri/libdril_dri.so
+      - usr/lib/x86_64-linux-gnu/libffi.so.8.1.4
+      - usr/lib/x86_64-linux-gnu/libgallium-25.2.8-0ubuntu0.24.04.2.so
+      - usr/lib/x86_64-linux-gnu/libwayland-client.so.0.22.0
+    - library:
+      - usr/lib/x86_64-linux-gnu/libEGL.so.1.1.0
+      - usr/lib/x86_64-linux-gnu/libEGL_mesa.so.0.0.0
+      - usr/lib/x86_64-linux-gnu/libGL.so.1.7.0
+      - usr/lib/x86_64-linux-gnu/libGLESv2.so.2.1.0
+      - usr/lib/x86_64-linux-gnu/libGLX_mesa.so.0.0.0
+      - usr/lib/x86_64-linux-gnu/libcolordprivate.so.2.0.5
+      - usr/lib/x86_64-linux-gnu/libdconf.so.1.0.0
+      - usr/lib/x86_64-linux-gnu/libgirepository-1.0.so.1.0.
+      - usr/lib/x86_64-linux-gnu/libglapi.so.0.0.0
+      - usr/lib/x86_64-linux-gnu/libgthread-2.0.so.0.8000.0
+      - usr/lib/x86_64-linux-gnu/libibus-1.0.so.5.0.529
+      - usr/lib/x86_64-linux-gnu/libicuio.so.74.2
+      - usr/lib/x86_64-linux-gnu/libicutest.so.74.2
+      - usr/lib/x86_64-linux-gnu/libpcre2-16.so.0.11.2
+      - usr/lib/x86_64-linux-gnu/libpcre2-32.so.0.11.2
+      - usr/lib/x86_64-linux-gnu/libpcre2-posix.so.3.0.4
+      - usr/lib/x86_64-linux-gnu/libvulkan.so.1.3.275
+      - usr/lib/x86_64-linux-gnu/libGLX.so.0.0.0
+      - usr/lib/x86_64-linux-gnu/libXxf86vm.so.1.0.0
+      - usr/lib/x86_64-linux-gnu/libicutu.so.74.2
+      - usr/lib/x86_64-linux-gnu/libxcb-glx.so.0.0.0
+      - usr/lib/x86_64-linux-gnu/libGLdispatch.so.0.0.0
+      - usr/lib/x86_64-linux-gnu/libicui18n.so.74.2
+      - usr/lib/x86_64-linux-gnu/libgirepository-1.0.so.1.0.0
+
 apps:
   ubuntu-core-model-builder:
     command: bin/ubuntu_core_model_builder
@@ -123,9 +156,8 @@ parts:
     source: https://github.com/canonical/surl.git
     source-type: git
     source-commit: 3e83328161f0d79ecdb15a6a0a3bcde8f5ab41cb
-    build-attributes:
-      - no-patchelf        # protect PyNaCl/cffi compiled .so files
     build-packages:
+      - patchelf
       - python3
       - python3-venv
       - python3-pip
@@ -140,6 +172,27 @@ parts:
       "$venv/bin/pip" install -r "$CRAFT_PART_SRC/requirements.txt"
       "$venv/bin/pip" install "$CRAFT_PART_SRC"
       test -f "$venv/bin/surl_cli.py"
+    override-prime: |
+      craftctl default
+
+      BASE="core24"
+
+      RPATH="/snap/$BASE/current/lib/x86_64-linux-gnu"
+      INTERP="/snap/$BASE/current/lib64/ld-linux-x86-64.so.2"
+
+      patchelf --force-rpath --set-rpath $RPATH $CRAFT_PRIME/usr/bin/python3.12
+      patchelf --set-interpreter $INTERP $CRAFT_PRIME/usr/bin/python3.12
+
+      for file in $CRAFT_PRIME/usr/lib/python3.12/lib-dynload/*; do
+          patchelf --force-rpath --set-rpath "\$ORIGIN/lib:$RPATH" $file;
+      done
+
+      patchelf --force-rpath --set-rpath "\$ORIGIN/lib:\$ORIGIN/../../x86_64-linux-gnu:$RPATH" \
+                                          $CRAFT_PRIME/usr/lib/python3.12/lib-dynload/_ctypes.cpython-312-x86_64-linux-gnu.so
+
+      for file in $(find $CRAFT_PRIME/usr/share/surl-venv/lib/python3.12/site-packages/ -name *.so); do
+          patchelf --force-rpath --set-rpath $RPATH $file
+      done
     stage-packages:
       - python3.12-minimal
       - libpython3.12-minimal

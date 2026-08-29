@@ -3,20 +3,25 @@ import 'package:flutter/material.dart';
 import '../models/store_snap.dart';
 import '../models/snap_entry.dart';
 import '../services/store_api_service.dart';
+import '../services/surl_service.dart';
 
 class SnapSearchField extends StatefulWidget {
   final void Function(SnapEntry entry, String? base) onSnapSelected;
   final String? modelBase;
-
-  /// The model's target architecture (e.g. "arm64"). Required so we search
-  /// the store for the correct architecture rather than the host's.
   final String architecture;
+  final String? storeId;
+
+  /// For a brand store: the pre-fetched catalog to filter client-side. When
+  /// null, remote find (global store) is used instead.
+  final List<StoreCatalogSnap>? catalog;
 
   const SnapSearchField({
     super.key,
     required this.onSnapSelected,
     required this.architecture,
     this.modelBase,
+    this.storeId,
+    this.catalog,
   });
 
   @override
@@ -37,6 +42,8 @@ class _SnapSearchFieldState extends State<SnapSearchField> {
   SnapType _type = SnapType.app;
   bool _loadingChannels = false;
   bool _adding = false;
+
+  bool get _brandMode => widget.catalog != null;
 
   @override
   void dispose() {
@@ -83,10 +90,38 @@ class _SnapSearchFieldState extends State<SnapSearchField> {
   }
 
   void _onQueryChanged(String value) {
+    if (_brandMode) {
+      // Client-side filter is instant; no debounce needed.
+      _filterCatalog(value.trim());
+      return;
+    }
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 350), () {
       _runSearch(value.trim());
     });
+  }
+
+  void _filterCatalog(String query) {
+    final cat = widget.catalog ?? const [];
+    if (query.length < 2) {
+      setState(() => _results = []);
+      return;
+    }
+    final q = query.toLowerCase();
+    final matches = cat
+        .where((c) => c.name.toLowerCase().contains(q))
+        .take(50)
+        .map((c) => StoreSnap(
+              name: c.name,
+              snapId: c.id,
+              title: c.name,
+              summary: null,
+              type: null,
+              base: null,
+              channels: const [],
+            ))
+        .toList();
+    setState(() => _results = matches);
   }
 
   Future<void> _runSearch(String query) async {
@@ -96,7 +131,8 @@ class _SnapSearchFieldState extends State<SnapSearchField> {
     }
     setState(() => _searching = true);
     try {
-      final results = await _store.findSnaps(query, widget.architecture);
+      final results = await _store.findSnaps(query, widget.architecture,
+          storeId: widget.storeId);
       if (!mounted) return;
       setState(() => _results = results.take(30).toList());
     } catch (_) {
@@ -118,12 +154,14 @@ class _SnapSearchFieldState extends State<SnapSearchField> {
       _searchController.text = snap.name;
     });
     try {
-      final info = await _store.getSnapInfo(snap.name, widget.architecture);
+      final info = await _store.getSnapInfo(snap.name, widget.architecture,
+          storeId: widget.storeId);
+      // TEMP DEBUG:
+      print('DEBUG channels for ${snap.name}: ${info.channels}');
       setState(() {
         _availableChannels =
             info.channels.isEmpty ? ['latest/stable'] : info.channels;
         _selected = info;
-        // Re-map type authoritatively from full info if available.
         if (info.type != null) _type = _mapStoreType(info.type);
         _channel = _defaultChannel();
       });
@@ -146,12 +184,10 @@ class _SnapSearchFieldState extends State<SnapSearchField> {
     );
   }
 
-
   Future<void> _add() async {
     final sel = _selected;
     final chan = _channel;
     if (sel == null || chan == null) return;
-
     setState(() => _adding = true);
     try {
       widget.onSnapSelected(
@@ -161,7 +197,7 @@ class _SnapSearchFieldState extends State<SnapSearchField> {
           type: _type,
           defaultChannel: chan,
         ),
-        sel.base, // resolved base of this snap (may be null)
+        sel.base,
       );
       setState(() {
         _selected = null;
@@ -180,7 +216,9 @@ class _SnapSearchFieldState extends State<SnapSearchField> {
     final channels = _filteredChannels();
     final channelValue =
         (_channel != null && channels.contains(_channel)) ? _channel : null;
-
+    final label = _brandMode
+        ? 'Search brand store (${widget.architecture})'
+        : 'Search snap (${widget.architecture})';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -191,7 +229,7 @@ class _SnapSearchFieldState extends State<SnapSearchField> {
               child: TextField(
                 controller: _searchController,
                 decoration: InputDecoration(
-                  labelText: 'Search snap (${widget.architecture})',
+                  labelText: label,
                   prefixIcon: const Icon(Icons.search),
                   suffixIcon: _searching
                       ? const Padding(
@@ -218,7 +256,8 @@ class _SnapSearchFieldState extends State<SnapSearchField> {
                           : null),
                 ),
                 onChanged: _onQueryChanged,
-                onSubmitted: _runSearch,
+                onSubmitted: (v) =>
+                    _brandMode ? _filterCatalog(v.trim()) : _runSearch(v),
               ),
             ),
             const SizedBox(width: 12),
@@ -235,15 +274,13 @@ class _SnapSearchFieldState extends State<SnapSearchField> {
                           child: SizedBox(
                             width: 16,
                             height: 16,
-                            child:
-                                CircularProgressIndicator(strokeWidth: 2),
+                            child: CircularProgressIndicator(strokeWidth: 2),
                           ),
                         )
                       : null,
                 ),
                 items: channels
-                    .map((c) =>
-                        DropdownMenuItem(value: c, child: Text(c)))
+                    .map((c) => DropdownMenuItem(value: c, child: Text(c)))
                     .toList(),
                 onChanged: _selected == null
                     ? null
@@ -253,10 +290,6 @@ class _SnapSearchFieldState extends State<SnapSearchField> {
             const SizedBox(width: 12),
             SizedBox(
               width: 150,
-              // Read-only Type: a disabled dropdown so its geometry matches
-              // the Channel dropdown exactly. The arrow is hidden and the
-              // text uses the normal colour so it reads as an informational
-              // field rather than a disabled control.
               child: DropdownButtonFormField<SnapType>(
                 value: _selected == null ? null : _type,
                 isExpanded: true,
@@ -271,8 +304,7 @@ class _SnapSearchFieldState extends State<SnapSearchField> {
                   ),
                 ),
                 items: SnapType.values
-                    .map((t) =>
-                        DropdownMenuItem(value: t, child: Text(t.name)))
+                    .map((t) => DropdownMenuItem(value: t, child: Text(t.name)))
                     .toList(),
                 onChanged: null,
               ),
