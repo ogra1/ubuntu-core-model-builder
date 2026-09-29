@@ -37,7 +37,7 @@ class SnapcraftEnv {
   /// True if snapcraft supports Candid web login (>= 9).
   static Future<bool> supportsWebLogin() async {
     final v = await majorVersion();
-    return v != null && v >= 9;
+    return v != null && v >= 10;
   }
 
   /// Environment for invoking snapcraft: host-sanitized, plus
