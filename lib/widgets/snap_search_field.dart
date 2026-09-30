@@ -31,6 +31,7 @@ class SnapSearchField extends StatefulWidget {
 class _SnapSearchFieldState extends State<SnapSearchField> {
   final _store = StoreApiService();
   final _searchController = TextEditingController();
+  final _manualNameController = TextEditingController();
 
   Timer? _debounce;
   List<StoreSnap> _results = [];
@@ -43,12 +44,17 @@ class _SnapSearchFieldState extends State<SnapSearchField> {
   bool _loadingChannels = false;
   bool _adding = false;
 
+  // Manual "add by exact name" (for snaps unlisted from search).
+  bool _showManualAdd = false;
+  bool _resolvingManual = false;
+
   bool get _brandMode => widget.catalog != null;
 
   @override
   void dispose() {
     _debounce?.cancel();
     _searchController.dispose();
+    _manualNameController.dispose();
     super.dispose();
   }
 
@@ -91,7 +97,6 @@ class _SnapSearchFieldState extends State<SnapSearchField> {
 
   void _onQueryChanged(String value) {
     if (_brandMode) {
-      // Client-side filter is instant; no debounce needed.
       _filterCatalog(value.trim());
       return;
     }
@@ -170,6 +175,41 @@ class _SnapSearchFieldState extends State<SnapSearchField> {
       });
     } finally {
       if (mounted) setState(() => _loadingChannels = false);
+    }
+  }
+
+  /// Resolves a snap by its exact name (for snaps unlisted from search) and
+  /// feeds it into the normal selection flow so all channel/type/base
+  /// automation still applies. The only manual step is typing the name.
+  Future<void> _resolveManualName() async {
+    final name = _manualNameController.text.trim();
+    if (name.isEmpty) return;
+    setState(() => _resolvingManual = true);
+    try {
+      // getSnapInfo throws if the name can't be resolved.
+      final info =
+          await _store.getSnapInfo(name, widget.architecture, storeId: widget.storeId);
+      if (!mounted) return;
+      // Feed into the same selection UI + automation as a search result.
+      await _selectSnap(info);
+      setState(() {
+        _showManualAdd = false;
+        _manualNameController.clear();
+      });
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            behavior: SnackBarBehavior.floating,
+            content: Text(
+              'No snap named "$name" found for '
+              '"${widget.architecture}". Check the exact name.',
+            ),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _resolvingManual = false);
     }
   }
 
@@ -355,6 +395,62 @@ class _SnapSearchFieldState extends State<SnapSearchField> {
                   onTap: () => _selectSnap(snap),
                 );
               },
+            ),
+          ),
+        // Collapsible "add by exact name" for snaps unlisted from search.
+        if (!_showManualAdd)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: () => setState(() => _showManualAdd = true),
+              icon: const Icon(Icons.edit_note),
+              label: const Text('Snap not listed? Add by exact name'),
+            ),
+          )
+        else
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _manualNameController,
+                    decoration: const InputDecoration(
+                      labelText: 'Exact snap name',
+                      helperText: 'For snaps unlisted from search '
+                          '(e.g. gtk-common-themes)',
+                      isDense: true,
+                    ),
+                    onSubmitted: (_) => _resolveManualName(),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: _resolvingManual
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : ElevatedButton(
+                          onPressed: _resolveManualName,
+                          child: const Text('Resolve'),
+                        ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: IconButton(
+                    icon: const Icon(Icons.close),
+                    tooltip: 'Cancel',
+                    onPressed: () => setState(() {
+                      _showManualAdd = false;
+                      _manualNameController.clear();
+                    }),
+                  ),
+                ),
+              ],
             ),
           ),
       ],
