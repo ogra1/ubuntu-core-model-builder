@@ -847,7 +847,7 @@ class _SnapsPageState extends State<SnapsPage> {
     final trailing = Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        if (s.type == SnapType.kernel)
+        if (s.type == SnapType.kernel || s.type == SnapType.app)
           IconButton(
             icon: const Icon(Icons.extension_outlined),
             tooltip: 'Edit components',
@@ -1031,7 +1031,7 @@ class _ComponentEditorDialogState extends State<_ComponentEditorDialog> {
           children: [
             if (widget.available.isEmpty)
               Text(
-                'No components are published for this kernel on '
+                'No components are published for this snap on '
                 '"${widget.channel}".',
                 style: Theme.of(context).textTheme.bodySmall,
               )
