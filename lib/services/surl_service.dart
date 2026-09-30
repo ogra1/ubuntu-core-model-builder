@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'host_env.dart';
+import 'terminal_runner.dart';
 
 /// A brand store the account can access. `ubuntu` is the global store, for
 /// which the model's `store` field should be omitted entirely.
@@ -49,9 +50,6 @@ class SurlUnavailableException implements Exception {
 }
 
 class SurlService {
-  /// Shared SharedPreferences key for the cached brand-store list, so both
-  /// the metadata page (which writes it) and the account page (which clears
-  /// it on logout) reference one source of truth.
   static const prefCachedStores = 'metadata.cachedStores';
 
   static const _authName = 'ubuntu-core-model-builder';
@@ -59,18 +57,10 @@ class SurlService {
   static const _accountUrl =
       'https://dashboard.snapcraft.io/dev/api/account';
 
-  // Permissions the web-login token must carry. package_access covers the
-  // account/store list; store_admin is required for the store catalog
-  // endpoint (listing snaps in a brand store). Individual queries use only
-  // the permission they need (package_access), but the token must be minted
-  // with both.
-  static const _loginPermissions = ['package_access', 'store_admin'];
   static const _queryPermission = 'package_access';
 
   // NOTE: "_pyVer" is coupled to the python3.12-minimal stage-package in
-  // snapcraft.yaml AND the venv built against it. If you bump the Python
-  // version (e.g. a new base), update BOTH the stage-package and this
-  // constant together. All bundled paths derive from it.
+  // snapcraft.yaml AND the venv built against it.
   static const _pyVer = 'python3.12';
 
   bool get _inSnap => (Platform.environment['SNAP'] ?? '').isNotEmpty;
@@ -126,8 +116,13 @@ class SurlService {
     try {
       r = await Process.run(
         exe,
-        [...prefix, '-a', _authName, '-p', _queryPermission, '-s', _server,
-            _accountUrl],
+        [
+          ...prefix,
+          '-a', _authName,
+          '-p', _queryPermission,
+          '-s', _server,
+          _accountUrl,
+        ],
         environment: _surlEnv(),
         includeParentEnvironment: false,
       );
@@ -167,9 +162,6 @@ class SurlService {
         .toList();
   }
 
-  /// Lists the snaps in a brand store's catalog. Requires an authenticated
-  /// token (minted with package_access + store_admin); the query itself uses
-  /// package_access. Throws [SurlAuthException] if not authenticated.
   Future<List<StoreCatalogSnap>> listStoreSnaps(String storeId) async {
     await _ensureAuthDir();
     final (exe, prefix) = _invocation();
@@ -222,36 +214,91 @@ class SurlService {
         .toList();
   }
 
-  /// Interactive web-login. Mints a token with the required permissions
-  /// (package_access + store_admin) so both store listing and catalog
-  /// browsing work. surl opens the browser and blocks until SSO completes.
+  /// Authenticates surl by exporting snapcraft store credentials and writing
+  /// a .surl credential file surl can use.
+  ///
+  /// Runs `snapcraft export-login --acls package_access,store_admin <file>`
+  /// in a terminal (it prompts for email/password/2FA on a tty), then decodes
+  /// the exported u1-macaroon and writes <auth>.surl as
+  /// {root, discharge, store}. The temporary export file is deleted.
+  ///
+  /// Throws [SurlAuthException] if export or crafting fails,
+  /// [NoTerminalException] if no terminal emulator is available.
   Future<void> webLogin() async {
     await _ensureAuthDir();
-    final (exe, prefix) = _invocation();
-    final permArgs = <String>[];
-    for (final p in _loginPermissions) {
-      permArgs
-        ..add('-p')
-        ..add(p);
-    }
-    final ProcessResult r;
+
+    final credsPath =
+        '${Directory.systemTemp.path}/uc-export-login-'
+        '${DateTime.now().millisecondsSinceEpoch}.txt';
+    final creds = File(credsPath);
     try {
-      r = await Process.run(
-        exe,
-        [...prefix, '-a', _authName, ...permArgs, '--web-login', '-s',
-            _server],
-        environment: _surlEnv(),
-        includeParentEnvironment: false,
-      );
-    } on ProcessException catch (e) {
-      throw SurlUnavailableException('Could not run surl: ${e.message}');
-    }
-    if (r.exitCode != 0) {
-      final err = (r.stderr as String?)?.trim() ?? '';
-      final out = (r.stdout as String?)?.trim() ?? '';
+      if (await creds.exists()) await creds.delete();
+    } catch (_) {}
+
+    // Run snapcraft export-login in a terminal (needs a tty for the prompts).
+    // The sentinel path is concatenated in; nothing here needs shell $ vars.
+    final cmd = 'snapcraft export-login '
+            "--acls package_access,store_admin '" +
+        credsPath +
+        "'; "
+            'echo; echo "You can close this window."; '
+            'read -n 1 -s -r -p "Press any key to close..."';
+
+    await TerminalRunner.runToCompletion(cmd);
+
+    if (!await creds.exists()) {
       throw SurlAuthException(
-        err.isNotEmpty ? err : (out.isNotEmpty ? out : 'Login failed.'),
-      );
+          'Login was not completed (no credentials were exported).');
     }
+
+    try {
+      await _craftSurlFromExport(credsPath);
+    } finally {
+      try {
+        if (await creds.exists()) await creds.delete();
+      } catch (_) {}
+    }
+  }
+
+  /// Decodes a snapcraft export-login file and writes the .surl file.
+  /// export-login format: base64 of {"t":"u1-macaroon","v":{"r":<root>,
+  /// "d":<discharge>}}. The .surl file is {"root":..,"discharge":..,
+  /// "store":"production"}.
+  Future<void> _craftSurlFromExport(String credsPath) async {
+    final raw = (await File(credsPath).readAsString()).trim();
+    if (raw.isEmpty) {
+      throw SurlAuthException('Exported credentials file is empty.');
+    }
+    Map<String, dynamic> data;
+    try {
+      final decoded = utf8.decode(base64.decode(raw));
+      data = jsonDecode(decoded) as Map<String, dynamic>;
+    } catch (e) {
+      throw SurlAuthException('Could not decode exported credentials: $e');
+    }
+    final v = data['v'];
+    if (v is! Map) {
+      throw SurlAuthException('Unexpected credentials format (no "v").');
+    }
+    final root = v['r'];
+    final discharge = v['d'];
+    if (root is! String || discharge is! String) {
+      throw SurlAuthException(
+          'Unexpected credentials format (missing root/discharge).');
+    }
+
+    final surlJson = jsonEncode({
+      'root': root,
+      'discharge': discharge,
+      'store': _server, // 'production'
+    });
+
+    final surlFile = File('$_authDir/$_authName.surl');
+    await surlFile.writeAsString(surlJson);
+    // Restrict permissions on the credential file (best effort).
+    try {
+      await Process.run('chmod', ['600', surlFile.path],
+          environment: HostEnv.sanitized, includeParentEnvironment: false);
+    } catch (_) {}
   }
 }

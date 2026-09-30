@@ -180,10 +180,12 @@ class _SnapsPageState extends State<SnapsPage> {
       builder: (_) => AlertDialog(
         title: const Text('Sign in to browse this brand store'),
         content: const Text(
-          'Browsing snaps in a brand store requires signing in with '
-          '"store-admin" permission. This grants administrative access to '
-          'your stores; the app uses it only to list this store\'s snaps.\n\n'
-          'Sign in now?',
+          'Browsing snaps in a brand store requires signing in to the store. '
+          'A terminal will open running "snapcraft export-login" — enter your '
+          'Ubuntu One email, password and 2FA there. This requests '
+          '"store-admin" permission (needed to list a store\'s snaps); the '
+          'app uses it only to browse the catalog.\n\n'
+          'Open the login terminal now?',
         ),
         actions: [
           TextButton(
@@ -192,7 +194,7 @@ class _SnapsPageState extends State<SnapsPage> {
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Sign in'),
+            child: const Text('Open login terminal'),
           ),
         ],
       ),

@@ -458,7 +458,7 @@ class _MetadataPageState extends State<MetadataPage> {
       try {
         stores = await surl.listStores();
       } on SurlAuthException {
-        state.setBusy(true, message: 'Opening login in your browser...');
+        state.setBusy(true, message: 'Opening store login in a terminal...');
         await surl.webLogin();
         state.setBusy(true, message: 'Fetching your stores...');
         stores = await surl.listStores();

@@ -79,24 +79,7 @@ class StoreService {
 
   Future<bool> isLoggedIn() async => (await getCurrentAccount()) != null;
 
-  /// True if the installed snapcraft supports browser-based (Candid) login.
-  Future<bool> supportsWebLogin() => SnapcraftEnv.supportsWebLogin();
-
-  /// Web login for snapcraft 9.x+: blocks, opens the browser, returns on
-  /// completion. No terminal needed. Returns the account on success, else
-  /// null.
-  Future<StoreAccount?> webLogin() async {
-    final result = await Process.run(
-      'snapcraft',
-      ['login'],
-      environment: await SnapcraftEnv.environment(),
-      includeParentEnvironment: false,
-    );
-    if (result.exitCode != 0) return null;
-    return getCurrentAccount();
-  }
-
-  /// Terminal-based login for older snapcraft (< 9). Uses a sentinel-file
+  /// Terminal-based login. Uses a sentinel-file
   /// cancel mechanism. Interactive login runs in the foreground (owns the
   /// tty); a background watcher kills it when the sentinel appears.
   ///

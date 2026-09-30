@@ -22,26 +22,6 @@ class AccountPage extends StatelessWidget {
 
   Future<void> _login(BuildContext context) async {
     final store = StoreService();
-
-    if (await store.supportsWebLogin()) {
-      state.setBusy(true, message: 'Opening login in your browser...');
-      try {
-        final acct = await store.webLogin();
-        state.setAccount(acct);
-        if (acct == null && context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Login was not completed.'),
-              behavior: SnackBarBehavior.floating,
-            ),
-          );
-        }
-      } finally {
-        state.busy = false;
-      }
-      return;
-    }
-
     final cancelToken = CancelToken();
     LoginSession? session;
 
