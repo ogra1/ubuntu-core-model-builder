@@ -1,4 +1,4 @@
-name: ubuntu-core-model-builder
+name: model-builder
 title: Ubuntu Core Model Builder
 version: '0.1.9'
 summary: GUI for creating and signing Ubuntu Core model assertions
@@ -6,6 +6,12 @@ description: |
   A graphical tool to create, edit, and sign Ubuntu Core model
   assertions. Searches the snap store, resolves snap IDs automatically,
   manages signing keys, and integrates with snapcraft.
+
+contact: https://github.com/ogra1/ubuntu-core-model-builder/issues
+license: GPL-2.0-only
+issues: https://github.com/ogra1/ubuntu-core-model-builder/issues
+source-code: https://github.com/ogra1/ubuntu-core-model-builder
+website: https://github.com/ogra1/ubuntu-core-model-builder
 
 confinement: classic
 grade: stable
