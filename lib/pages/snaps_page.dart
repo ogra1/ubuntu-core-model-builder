@@ -56,6 +56,14 @@ class _SnapsPageState extends State<SnapsPage> {
       await _loadStoreName();
       await _seedRequiredSnaps();
       _resolveGadgetBase();
+      // A brand store can only be selected via the authenticated picker, so a
+      // valid surl credential should exist. Auto-fetch the catalog silently
+      // (search is useless for a brand store without it). Falls back to the
+      // disclosure/re-auth prompt only if the token turns out to be missing
+      // or expired.
+      if (_isBrandStore) {
+        _ensureCatalog();
+      }
     });
   }
 
@@ -607,15 +615,34 @@ class _SnapsPageState extends State<SnapsPage> {
                                 CircularProgressIndicator(strokeWidth: 2),
                           ),
                           SizedBox(width: 12),
-                          Text('Loading brand store catalog...'),
+                          Text('Loading store catalog...'),
                         ],
                       )
-                    : OutlinedButton.icon(
-                        onPressed: _ensureCatalog,
-                        icon: const Icon(Icons.cloud_download_outlined),
-                        label: Text(
-                            'Load "${_storeName ?? _storeId}" store '
-                            'catalog to search'),
+                    // Catalog not loaded and not fetching: the auto-fetch was
+                    // declined or failed. Offer a compact retry (search needs
+                    // the catalog for a brand store).
+                    : Row(
+                        children: [
+                          Icon(Icons.info_outline,
+                              size: 18,
+                              color: Theme.of(context).hintColor),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Store catalog not loaded — search is '
+                              'unavailable until you sign in.',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .bodySmall
+                                  ?.copyWith(
+                                      color: Theme.of(context).hintColor),
+                            ),
+                          ),
+                          TextButton(
+                            onPressed: _ensureCatalog,
+                            child: const Text('Sign in'),
+                          ),
+                        ],
                       ),
               ),
             const SizedBox(height: 24),

@@ -29,31 +29,27 @@ class MetadataPage extends StatefulWidget {
 
 class _MetadataPageState extends State<MetadataPage> {
   static const _prefLastImportDir = 'metadata.lastImportDir';
-  static const _prefRecentStores = 'metadata.recentStores';
 
   final _nameController = TextEditingController();
-  final _storeController = TextEditingController();
-  final _storeFocus = FocusNode();
   final _store = StoreApiService();
-
-  List<String> _recentStores = [];
 
   WizardState get state => widget.state;
   ModelAssertion get model => state.model;
+
+  // Resolved display name for the currently-selected brand store (from the
+  // cached store list), so we can show the name rather than the raw ID.
+  String? _selectedStoreName;
 
   @override
   void initState() {
     super.initState();
     _nameController.text = model.model ?? '';
-    _storeController.text = model.store ?? '';
-    _loadRecentStores();
+    _resolveSelectedStoreName();
   }
 
   @override
   void dispose() {
     _nameController.dispose();
-    _storeController.dispose();
-    _storeFocus.dispose();
     super.dispose();
   }
 
@@ -64,36 +60,23 @@ class _MetadataPageState extends State<MetadataPage> {
       _nameController.selection =
           TextSelection.collapsed(offset: _nameController.text.length);
     }
-    final wantStore = model.store ?? '';
-    if (_storeController.text != wantStore) {
-      _storeController.text = wantStore;
-      _storeController.selection =
-          TextSelection.collapsed(offset: _storeController.text.length);
-    }
   }
 
-  Future<void> _loadRecentStores() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final list = prefs.getStringList(_prefRecentStores);
-      if (list != null && mounted) {
-        setState(() => _recentStores = list);
+  /// Looks up the display name for model.store from the cached store list.
+  Future<void> _resolveSelectedStoreName() async {
+    final id = model.store;
+    if (id == null || id.isEmpty) {
+      if (_selectedStoreName != null && mounted) {
+        setState(() => _selectedStoreName = null);
       }
-    } catch (_) {}
-  }
-
-  Future<void> _rememberStore(String store) async {
-    final v = store.trim();
-    if (v.isEmpty) return;
-    final updated = <String>[
-      v,
-      ..._recentStores.where((s) => s != v),
-    ].take(10).toList();
-    setState(() => _recentStores = updated);
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setStringList(_prefRecentStores, updated);
-    } catch (_) {}
+      return;
+    }
+    for (final s in await _loadCachedStores()) {
+      if (s.id == id) {
+        if (mounted) setState(() => _selectedStoreName = s.name);
+        return;
+      }
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -106,10 +89,6 @@ class _MetadataPageState extends State<MetadataPage> {
     model.base = newBase;
     state.invalidateSignature();
 
-    // Remove the base snap seeded for the PREVIOUS model base, so repeatedly
-    // changing the base does not accumulate stale base snaps. Guard: never
-    // remove a base an app still depends on (appBase == oldBase), and never
-    // remove the new base itself.
     if (oldBase != null && oldBase != newBase) {
       final neededByApp = model.snaps.any(
         (s) => s.type == SnapType.app && s.appBase == oldBase,
@@ -136,13 +115,10 @@ class _MetadataPageState extends State<MetadataPage> {
     }
   }
 
-  /// Adds the base snap for [baseName] if the model does not already contain
-  /// a base snap with that name. Idempotent; safe to call repeatedly.
   Future<void> _ensureBaseSnap(String baseName, String arch) async {
-    final alreadyPresent = model.snaps
-        .any((s) => s.type == SnapType.base && s.name == baseName);
+    final alreadyPresent =
+        model.snaps.any((s) => s.type == SnapType.base && s.name == baseName);
     if (alreadyPresent) return;
-
     final info = await _store.getSnapInfo(baseName, arch);
     final track = RegExp(r'(\d+)').firstMatch(baseName)?.group(1);
     String channel = 'latest/stable';
@@ -161,7 +137,6 @@ class _MetadataPageState extends State<MetadataPage> {
         orElse: () => info.channels.first,
       );
     }
-
     model.snaps.removeWhere((s) => s.name == info.name);
     model.snaps.add(SnapEntry(
       name: info.name,
@@ -173,8 +148,6 @@ class _MetadataPageState extends State<MetadataPage> {
     if (mounted) setState(() {});
   }
 
-  /// Warns (authoritatively, via store lookup) if the current gadget's base
-  /// does not match [newBase]. The gadget must be built on the model base.
   Future<void> _checkGadgetBase(String newBase, String arch) async {
     SnapEntry? gadget;
     for (final s in model.snaps) {
@@ -183,17 +156,14 @@ class _MetadataPageState extends State<MetadataPage> {
         break;
       }
     }
-    if (gadget == null) return; // no gadget yet; nothing to check
-
+    if (gadget == null) return;
     String? gadgetBase;
     try {
-      // Per-channel base (the gadget may have different bases per track).
       gadgetBase = await _store.getBaseForChannel(
-          gadget.name, arch, gadget.defaultChannel);
+          gadget.name, arch, gadget.defaultChannel, storeId: model.store);
     } catch (_) {
-      return; // can't resolve; skip the warning rather than false-alarm
+      return;
     }
-
     if (gadgetBase != null && gadgetBase != newBase) {
       if (!mounted) return;
       await showDialog<void>(
@@ -286,9 +256,7 @@ class _MetadataPageState extends State<MetadataPage> {
 
       state.importModel(result.model);
       _syncControllersFromModel();
-      if (model.store != null && model.store!.trim().isNotEmpty) {
-        await _rememberStore(model.store!);
-      }
+      await _resolveSelectedStoreName();
       widget.onChanged();
 
       final account = state.account;
@@ -467,8 +435,7 @@ class _MetadataPageState extends State<MetadataPage> {
       if (!context.mounted) return;
       await _showStorePicker(context, stores);
     } on SurlUnavailableException catch (e) {
-      _error(context,
-          'Store lookup is unavailable: $e. You can type a store ID manually.');
+      _error(context, 'Store lookup is unavailable: $e.');
     } on SurlAuthException catch (e) {
       _error(context, 'Store login failed: $e');
     } catch (e) {
@@ -535,12 +502,20 @@ class _MetadataPageState extends State<MetadataPage> {
 
     if (selected.isGlobal) {
       model.store = null;
-      _storeController.text = '';
+      _selectedStoreName = null;
     } else {
       model.store = selected.id;
-      _storeController.text = selected.id;
-      await _rememberStore(selected.id);
+      _selectedStoreName = selected.name;
     }
+    state.invalidateSignature();
+    widget.onChanged();
+    setState(() {});
+  }
+
+  void _clearStore() {
+    model.store = null;
+    _selectedStoreName = null;
+    state.invalidateSignature();
     widget.onChanged();
     setState(() {});
   }
@@ -653,21 +628,7 @@ class _MetadataPageState extends State<MetadataPage> {
                   onChanged: (v) => _onBaseChanged(v),
                 ),
                 const SizedBox(height: 16),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(child: _buildStoreField(context)),
-                    const SizedBox(width: 12),
-                    Padding(
-                      padding: const EdgeInsets.only(top: 8),
-                      child: OutlinedButton.icon(
-                        onPressed: () => _fetchStores(context),
-                        icon: const Icon(Icons.cloud_download_outlined),
-                        label: const Text('Fetch my stores'),
-                      ),
-                    ),
-                  ],
-                ),
+                _buildStoreField(context),
               ],
             ),
           ),
@@ -693,58 +654,55 @@ class _MetadataPageState extends State<MetadataPage> {
     );
   }
 
+  /// Read-only store display. A brand store can only be set by picking it from
+  /// the authenticated "Fetch my stores" list — never typed manually — so that
+  /// selecting a brand store guarantees surl authentication has occurred.
   Widget _buildStoreField(BuildContext context) {
-    return RawAutocomplete<String>(
-      textEditingController: _storeController,
-      focusNode: _storeFocus,
-      optionsBuilder: (value) {
-        final q = value.text.trim();
-        if (_recentStores.isEmpty) return const Iterable<String>.empty();
-        if (q.isEmpty) return _recentStores;
-        return _recentStores
-            .where((s) => s.toLowerCase().contains(q.toLowerCase()));
-      },
-      onSelected: (sel) {
-        _storeController.text = sel;
-        model.store = sel.trim().isEmpty ? null : sel.trim();
-        widget.onChanged();
-      },
-      fieldViewBuilder: (context, controller, focusNode, onSubmit) {
-        return TextField(
-          controller: controller,
-          focusNode: focusNode,
-          decoration: const InputDecoration(
-            labelText: 'Store ID (optional)',
-            helperText: 'Brand store ID; leave blank for the global store',
-          ),
-          onChanged: (v) {
-            model.store = v.trim().isEmpty ? null : v.trim();
-            widget.onChanged();
-          },
-        );
-      },
-      optionsViewBuilder: (context, onSelected, options) {
-        return Align(
-          alignment: Alignment.topLeft,
-          child: Material(
-            elevation: 4,
-            child: SizedBox(
-              width: 400,
-              child: ListView(
-                shrinkWrap: true,
-                padding: EdgeInsets.zero,
-                children: options
-                    .map((o) => ListTile(
-                          dense: true,
-                          title: Text(o),
-                          onTap: () => onSelected(o),
-                        ))
-                    .toList(),
+    final id = model.store;
+    final hasStore = id != null && id.isNotEmpty;
+    final displayText = hasStore
+        ? (_selectedStoreName != null ? '${_selectedStoreName!}  ($id)' : id)
+        : 'Global store (no store ID)';
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: InputDecorator(
+            decoration: const InputDecoration(
+              labelText: 'Store',
+              helperText:
+                  'Pick a brand store with "Fetch my stores", or use the '
+                  'global store',
+            ),
+            child: Text(
+              displayText,
+              style: TextStyle(
+                color: hasStore ? null : Theme.of(context).hintColor,
               ),
             ),
           ),
-        );
-      },
+        ),
+        const SizedBox(width: 12),
+        if (hasStore)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: IconButton(
+              icon: const Icon(Icons.clear),
+              tooltip: 'Use global store',
+              onPressed: _clearStore,
+            ),
+          ),
+        const SizedBox(width: 4),
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: OutlinedButton.icon(
+            onPressed: () => _fetchStores(context),
+            icon: const Icon(Icons.cloud_download_outlined),
+            label: const Text('Fetch my stores'),
+          ),
+        ),
+      ],
     );
   }
 }
