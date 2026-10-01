@@ -125,7 +125,7 @@ class _HomePageState extends State<HomePage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Ubuntu Core Model Builder'),
+        title: const Text('Model Builder'),
 		centerTitle: false,
       ),
       body: Column(

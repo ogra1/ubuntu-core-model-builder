@@ -77,7 +77,7 @@ class _ModelBuilderAppState extends State<ModelBuilderApp>
     return YaruTheme(
       builder: (context, yaru, child) {
         return MaterialApp(
-          title: 'Ubuntu Core Model Builder',
+          title: 'Model Builder',
           theme: yaru.theme,
           darkTheme: yaru.darkTheme,
           debugShowCheckedModeBanner: false,
