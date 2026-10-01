@@ -115,6 +115,13 @@ class AssertionBuilder {
   /// each group. Exposed so the UI can display snaps in the same order the
   /// signed assertion will contain them.
   static List<SnapEntry> orderedSnaps(List<SnapEntry> snaps) {
+    // Infrastructure snaps are emitted in a fixed type order (snapd, bases,
+    // kernel, gadget) because snapd requires e.g. bases before the kernel/
+    // gadget that use them. App snaps, however, MUST preserve the order the
+    // user added them: snapd processes the model top-to-bottom during image
+    // build, so an app that depends on other app/content snaps (e.g. chromium
+    // needing mesa/gnome/gtk-common-themes/cups) must appear AFTER them.
+    // Alphabetical sorting would break such dependency ordering.
     int rank(SnapType t) => switch (t) {
           SnapType.snapd => 0,
           SnapType.base => 1,
@@ -122,12 +129,24 @@ class AssertionBuilder {
           SnapType.gadget => 3,
           SnapType.app => 4,
         };
-    final sorted = [...snaps]
-      ..sort((a, b) {
-        final r = rank(a.type).compareTo(rank(b.type));
-        return r != 0 ? r : a.name.compareTo(b.name);
-      });
-    return sorted;
+
+    final infra = <SnapEntry>[];
+    final apps = <SnapEntry>[];
+    for (final s in snaps) {
+      if (s.type == SnapType.app) {
+        apps.add(s); // preserve insertion order
+      } else {
+        infra.add(s);
+      }
+    }
+    // Stable sort of infrastructure by type rank, then name (deterministic;
+    // app ordering is left untouched).
+    infra.sort((a, b) {
+      final r = rank(a.type).compareTo(rank(b.type));
+      return r != 0 ? r : a.name.compareTo(b.name);
+    });
+
+    return [...infra, ...apps];
   }
 
   static Map<String, dynamic> _snapToMap(SnapEntry snap) {

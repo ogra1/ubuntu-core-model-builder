@@ -837,6 +837,56 @@ class _SnapsPageState extends State<SnapsPage> {
     }
   }
 
+  /// The app snaps in their current model order (the order that will be
+  /// emitted and that matters for snapd's top-to-bottom processing).
+  List<SnapEntry> get _appsInOrder =>
+      widget.model.snaps.where((s) => s.type == SnapType.app).toList();
+
+  bool _isFirstApp(SnapEntry s) {
+    final apps = _appsInOrder;
+    return apps.isNotEmpty && identical(apps.first, s);
+  }
+
+  bool _isLastApp(SnapEntry s) {
+    final apps = _appsInOrder;
+    return apps.isNotEmpty && identical(apps.last, s);
+  }
+
+  /// Moves an app snap one position earlier/later relative to the OTHER app
+  /// snaps, by swapping it with the adjacent app in model.snaps. Infrastructure
+  /// snaps are unaffected (they are ordered by type at emit time).
+  void _moveApp(SnapEntry s, {required bool up}) {
+    final snaps = widget.model.snaps;
+    final idx = snaps.indexOf(s);
+    if (idx < 0 || s.type != SnapType.app) return;
+
+    // Find the adjacent app index (skipping non-app entries).
+    int target = -1;
+    if (up) {
+      for (var i = idx - 1; i >= 0; i--) {
+        if (snaps[i].type == SnapType.app) {
+          target = i;
+          break;
+        }
+      }
+    } else {
+      for (var i = idx + 1; i < snaps.length; i++) {
+        if (snaps[i].type == SnapType.app) {
+          target = i;
+          break;
+        }
+      }
+    }
+    if (target < 0) return; // already first/last app
+
+    final tmp = snaps[idx];
+    snaps[idx] = snaps[target];
+    snaps[target] = tmp;
+
+    widget.onChanged();
+    setState(() {});
+  }
+
   Widget _buildSnapTile(BuildContext context, SnapEntry s) {
     final isApp = s.type == SnapType.app;
     final isDependentBase =
@@ -847,6 +897,18 @@ class _SnapsPageState extends State<SnapsPage> {
     final trailing = Row(
       mainAxisSize: MainAxisSize.min,
       children: [
+        if (isApp) ...[
+          IconButton(
+            icon: const Icon(Icons.arrow_upward),
+            tooltip: 'Move earlier (installed sooner)',
+            onPressed: _isFirstApp(s) ? null : () => _moveApp(s, up: true),
+          ),
+          IconButton(
+            icon: const Icon(Icons.arrow_downward),
+            tooltip: 'Move later (installed after)',
+            onPressed: _isLastApp(s) ? null : () => _moveApp(s, up: false),
+          ),
+        ],
         if (s.type == SnapType.kernel || s.type == SnapType.app)
           IconButton(
             icon: const Icon(Icons.extension_outlined),

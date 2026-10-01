@@ -277,6 +277,89 @@ class StoreApiService {
     return const [];
   }
 
+  /// Returns the download size in bytes for [snapName] on [channel] and
+  /// [architecture], from the matching channel-map entry's download.size.
+  /// Returns null if not found.
+  Future<int?> getDownloadSize(
+      String snapName, String architecture, String channel,
+      {String? storeId}) async {
+    final uri = Uri.parse(
+      '$_base/snaps/info/${Uri.encodeComponent(snapName)}'
+      '?fields=download,revision',
+    );
+    final resp = await http.get(uri, headers: _headers(architecture, storeId));
+    if (resp.statusCode != 200) return null;
+    final body = jsonDecode(resp.body) as Map<String, dynamic>;
+    final channelMap = body['channel-map'] as List<dynamic>? ?? const [];
+    for (final entry in channelMap) {
+      final m = entry as Map<String, dynamic>;
+      final ch = m['channel'] as Map<String, dynamic>?;
+      if (ch == null) continue;
+      final arch = ch['architecture'] as String?;
+      if (arch != null && arch != architecture) continue;
+      final track = ch['track'] as String? ?? 'latest';
+      final risk = ch['risk'] as String? ?? 'stable';
+      final canonical = '$track/$risk';
+      final nameField = ch['name'] as String?;
+      if (channel == canonical ||
+          channel == risk ||
+          channel == nameField) {
+        final dl = m['download'] as Map<String, dynamic>?;
+        final size = dl?['size'];
+        if (size is int) return size;
+        if (size is num) return size.toInt();
+        return null;
+      }
+    }
+    return null;
+  }
+
+  /// Returns a map of component name -> download size (bytes) for [snapName]
+  /// on [channel]/[architecture], from the matching entry's resources.
+  Future<Map<String, int>> getComponentSizes(
+      String snapName, String architecture, String channel,
+      {String? storeId}) async {
+    final uri = Uri.parse(
+      '$_base/snaps/info/${Uri.encodeComponent(snapName)}'
+      '?fields=revision,resources',
+    );
+    final resp = await http.get(uri, headers: _headers(architecture, storeId));
+    if (resp.statusCode != 200) return const {};
+    final body = jsonDecode(resp.body) as Map<String, dynamic>;
+    final channelMap = body['channel-map'] as List<dynamic>? ?? const [];
+    for (final entry in channelMap) {
+      final m = entry as Map<String, dynamic>;
+      final ch = m['channel'] as Map<String, dynamic>?;
+      if (ch == null) continue;
+      final arch = ch['architecture'] as String?;
+      if (arch != null && arch != architecture) continue;
+      final track = ch['track'] as String? ?? 'latest';
+      final risk = ch['risk'] as String? ?? 'stable';
+      final canonical = '$track/$risk';
+      final nameField = ch['name'] as String?;
+      if (channel == canonical ||
+          channel == risk ||
+          channel == nameField) {
+        final resources = m['resources'] as List<dynamic>? ?? const [];
+        final sizes = <String, int>{};
+        for (final r in resources) {
+          if (r is! Map) continue;
+          final rm = r.cast<String, dynamic>();
+          final type = (rm['type'] ?? '').toString();
+          if (!type.startsWith('component/')) continue;
+          final name = (rm['name'] ?? '').toString();
+          final dl = rm['download'] as Map<String, dynamic>?;
+          final size = dl?['size'];
+          if (name.isNotEmpty && size is num) {
+            sizes[name] = size.toInt();
+          }
+        }
+        return sizes;
+      }
+    }
+    return const {};
+  }
+
   static int _channelCompare(String a, String b) {
     final pa = a.split('/');
     final pb = b.split('/');

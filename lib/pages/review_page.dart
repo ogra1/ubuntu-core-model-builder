@@ -6,6 +6,7 @@ import 'package:yaru/yaru.dart';
 import '../models/wizard_step.dart';
 import '../services/assertion_builder.dart';
 import '../services/assertion_verifier.dart';
+import '../services/seed_size_calculator.dart';
 import '../services/snapcraft_service.dart';
 import '../widgets/verification_report_view.dart';
 
@@ -26,6 +27,10 @@ class _ReviewPageState extends State<ReviewPage> {
   String? _jsonHeader;
   bool _alsoSaveJson = false;
   String? _lastSaveDir;
+
+  SeedSizeResult? _sizeResult;
+  bool _calculatingSize = false;
+  bool _showSizeBreakdown = false;
 
   @override
   void initState() {
@@ -71,6 +76,26 @@ class _ReviewPageState extends State<ReviewPage> {
     return path.substring(0, idx);
   }
 
+  Future<void> _calculateSize() async {
+    setState(() {
+      _calculatingSize = true;
+      _sizeResult = null;
+    });
+    try {
+      final result = await SeedSizeCalculator().calculate(widget.state.model);
+      if (mounted) {
+        setState(() {
+          _sizeResult = result;
+          _showSizeBreakdown = false;
+        });
+      }
+    } catch (e) {
+      _showError('Could not calculate size: $e');
+    } finally {
+      if (mounted) setState(() => _calculatingSize = false);
+    }
+  }
+
   Future<void> _sign() async {
     final keyName = widget.state.selectedKeyName;
     if (keyName == null) return;
@@ -87,7 +112,7 @@ class _ReviewPageState extends State<ReviewPage> {
       setState(() {
         _report = report;
         _jsonHeader = result.jsonHeader;
-        _savedPath = null; // fresh signature => not yet saved
+        _savedPath = null;
         widget.state.signedAssertion =
             report.allPassed ? result.signedAssertion : null;
       });
@@ -241,10 +266,6 @@ class _ReviewPageState extends State<ReviewPage> {
   Widget build(BuildContext context) {
     final signed = widget.state.signedAssertion;
 
-    // If the signature was invalidated (model edited elsewhere), drop the
-    // local verification/JSON/saved state so nothing stale is shown. Safe to
-    // mutate fields directly during build (no setState needed - we are
-    // already building, and the values only affect this build's output).
     if (signed == null &&
         (_report != null || _jsonHeader != null || _savedPath != null)) {
       _report = null;
@@ -265,6 +286,8 @@ class _ReviewPageState extends State<ReviewPage> {
             child: _buildPreview(),
           ),
         ),
+        const SizedBox(height: 24),
+        _buildSeedSizeSection(context),
         const SizedBox(height: 24),
         Row(
           children: [
@@ -332,6 +355,108 @@ class _ReviewPageState extends State<ReviewPage> {
           ),
         ],
       ],
+    );
+  }
+
+  Widget _buildSeedSizeSection(BuildContext context) {
+    final result = _sizeResult;
+    return YaruSection(
+      headline: const Text('Seed size'),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Total compressed size of all seeded snaps (and selected '
+              'components). Snaps are loop-mounted squashfs, so this is also '
+              'the on-disk footprint — size the gadget\'s ubuntu-seed '
+              'partition to at least this, plus filesystem overhead.',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).hintColor,
+                  ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                ElevatedButton.icon(
+                  onPressed: _calculatingSize ? null : _calculateSize,
+                  icon: _calculatingSize
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.straighten),
+                  label: const Text('Calculate seed size'),
+                ),
+                const SizedBox(width: 16),
+                if (result != null)
+                  Text(
+                    'Total: ${SeedSizeCalculator.formatBytes(result.totalBytes)}',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                  ),
+              ],
+            ),
+            if (result != null) ...[
+              if (result.warnings.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text(
+                  'Note: size could not be resolved for '
+                  '${result.warnings.length} item(s); the total is a lower '
+                  'bound.',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                ),
+              ],
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: () => setState(
+                      () => _showSizeBreakdown = !_showSizeBreakdown),
+                  icon: Icon(_showSizeBreakdown
+                      ? Icons.expand_less
+                      : Icons.expand_more),
+                  label: Text(_showSizeBreakdown
+                      ? 'Hide breakdown'
+                      : 'Show breakdown'),
+                ),
+              ),
+              if (_showSizeBreakdown)
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    for (final line in result.lines)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 2),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(line.label,
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .bodySmall),
+                            ),
+                            Text(
+                              SeedSizeCalculator.formatBytes(line.bytes),
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .bodySmall
+                                  ?.copyWith(fontFamily: 'monospace'),
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+            ],
+          ],
+        ),
+      ),
     );
   }
 
