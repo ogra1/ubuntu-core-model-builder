@@ -1,5 +1,5 @@
 name: model-builder
-title: Ubuntu Core Model Builder
+title: Model Builder
 version: '0.1.9'
 summary: GUI for creating and signing Ubuntu Core model assertions
 description: |
@@ -55,7 +55,7 @@ lint:
       - usr/lib/x86_64-linux-gnu/libgirepository-1.0.so.1.0.0
 
 apps:
-  ubuntu-core-model-builder:
+  model-builder:
     command: bin/ubuntu_core_model_builder
     environment:
       PATH: $SNAP/bin:$SNAP/usr/bin:$PATH
