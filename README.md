@@ -14,14 +14,14 @@ A Flutter desktop GUI for creating and signing Ubuntu Core model assertions.
 <img width="2604" height="1710" alt="Screenshot from 2026-07-21 22-25-39" src="https://github.com/user-attachments/assets/e32ea678-d347-4efb-b709-f4f2056cd242" />
 
 ## Features
-- Auto-detects store account via snapcraft whoami
-- Searches snaps and auto-resolves snap IDs via the snapd REST API
-- Create and register signing keys transparently
+- Interfaces with the snapcraft user and key management
+- Searches snaps and auto-resolves snap IDs via direct store calls
+- Create and register signing keys transparently with snapcraft
 - Typed metadata inputs, wizard flow with step validation
 - Signs models via snap sign and verifies the output
 
 ## Requirements (host tools, used via classic confinement)
-- snap
+- snapd/snap
 - snapcraft (install with: snap install snapcraft --classic)
 - A graphical pinentry (pinentry-gnome3) recommended for passphrase prompts
 
@@ -31,9 +31,9 @@ Then: flutter run -d linux
 
 ## Build the snap
 Run: snapcraft
-Then install locally: sudo snap install ./ubuntu-core-model-builder_0.1.0_amd64.snap --classic --dangerous
+Then install locally: sudo snap install ./model-builder_0.1.0_amd64.snap --classic --dangerous
 
 ## Confinement
-This app uses classic confinement because it orchestrates other
-developer snaps (snapcraft) and the host gpg keyring; nesting
-strict-confined snap invocations is not feasible.
+This app uses classic confinement because it orchestrates snapcrafts account and keyring management and
+needs to utilize model signing via snapd which is not available through the snapd REST API (would mean that
+secrets get sent across REST which is not desirable)
