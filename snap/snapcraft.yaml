@@ -24,35 +24,35 @@ platforms:
 lint:
   ignore:
     - classic:
-      - usr/lib/x86_64-linux-gnu/dri/libdril_dri.so
-      - usr/lib/x86_64-linux-gnu/libffi.so.8.1.4
-      - usr/lib/x86_64-linux-gnu/libgallium-25.2.8-0ubuntu0.24.04.2.so
-      - usr/lib/x86_64-linux-gnu/libwayland-client.so.0.22.0
+      - usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/dri/libdril_dri.so
+      - usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libffi.so.8.1.4
+      - usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libgallium-25.2.8-0ubuntu0.24.04.2.so
+      - usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libwayland-client.so.0.22.0
     - library:
-      - usr/lib/x86_64-linux-gnu/libEGL.so.1.1.0
-      - usr/lib/x86_64-linux-gnu/libEGL_mesa.so.0.0.0
-      - usr/lib/x86_64-linux-gnu/libGL.so.1.7.0
-      - usr/lib/x86_64-linux-gnu/libGLESv2.so.2.1.0
-      - usr/lib/x86_64-linux-gnu/libGLX_mesa.so.0.0.0
-      - usr/lib/x86_64-linux-gnu/libcolordprivate.so.2.0.5
-      - usr/lib/x86_64-linux-gnu/libdconf.so.1.0.0
-      - usr/lib/x86_64-linux-gnu/libgirepository-1.0.so.1.0.
-      - usr/lib/x86_64-linux-gnu/libglapi.so.0.0.0
-      - usr/lib/x86_64-linux-gnu/libgthread-2.0.so.0.8000.0
-      - usr/lib/x86_64-linux-gnu/libibus-1.0.so.5.0.529
-      - usr/lib/x86_64-linux-gnu/libicuio.so.74.2
-      - usr/lib/x86_64-linux-gnu/libicutest.so.74.2
-      - usr/lib/x86_64-linux-gnu/libpcre2-16.so.0.11.2
-      - usr/lib/x86_64-linux-gnu/libpcre2-32.so.0.11.2
-      - usr/lib/x86_64-linux-gnu/libpcre2-posix.so.3.0.4
-      - usr/lib/x86_64-linux-gnu/libvulkan.so.1.3.275
-      - usr/lib/x86_64-linux-gnu/libGLX.so.0.0.0
-      - usr/lib/x86_64-linux-gnu/libXxf86vm.so.1.0.0
-      - usr/lib/x86_64-linux-gnu/libicutu.so.74.2
-      - usr/lib/x86_64-linux-gnu/libxcb-glx.so.0.0.0
-      - usr/lib/x86_64-linux-gnu/libGLdispatch.so.0.0.0
-      - usr/lib/x86_64-linux-gnu/libicui18n.so.74.2
-      - usr/lib/x86_64-linux-gnu/libgirepository-1.0.so.1.0.0
+      - usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libEGL.so.1.1.0
+      - usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libEGL_mesa.so.0.0.0
+      - usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libGL.so.1.7.0
+      - usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libGLESv2.so.2.1.0
+      - usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libGLX_mesa.so.0.0.0
+      - usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libcolordprivate.so.2.0.5
+      - usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libdconf.so.1.0.0
+      - usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libgirepository-1.0.so.1.0.
+      - usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libglapi.so.0.0.0
+      - usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libgthread-2.0.so.0.8000.0
+      - usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libibus-1.0.so.5.0.529
+      - usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libicuio.so.74.2
+      - usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libicutest.so.74.2
+      - usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libpcre2-16.so.0.11.2
+      - usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libpcre2-32.so.0.11.2
+      - usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libpcre2-posix.so.3.0.4
+      - usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libvulkan.so.1.3.275
+      - usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libGLX.so.0.0.0
+      - usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libXxf86vm.so.1.0.0
+      - usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libicutu.so.74.2
+      - usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libxcb-glx.so.0.0.0
+      - usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libGLdispatch.so.0.0.0
+      - usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libicui18n.so.74.2
+      - usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libgirepository-1.0.so.1.0.0
 
 apps:
   model-builder:
@@ -183,8 +183,14 @@ parts:
 
       BASE="core24"
 
-      RPATH="/snap/$BASE/current/lib/x86_64-linux-gnu"
+      RPATH="/snap/$BASE/current/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR"
       INTERP="/snap/$BASE/current/lib64/ld-linux-x86-64.so.2"
+      CPYTHON_ARCH="x86_64"
+
+      if [ $CRAFT_ARCH_BUILD_FOR = "arm64" ]; then
+        INTERP="/snap/$BASE/current/lib/ld-linux-aarch64.so.1"
+        CPYTHON_ARCH="aarch64"
+      fi
 
       patchelf --force-rpath --set-rpath $RPATH $CRAFT_PRIME/usr/bin/python3.12
       patchelf --set-interpreter $INTERP $CRAFT_PRIME/usr/bin/python3.12
@@ -193,8 +199,8 @@ parts:
           patchelf --force-rpath --set-rpath "\$ORIGIN/lib:$RPATH" $file;
       done
 
-      patchelf --force-rpath --set-rpath "\$ORIGIN/lib:\$ORIGIN/../../x86_64-linux-gnu:$RPATH" \
-                                          $CRAFT_PRIME/usr/lib/python3.12/lib-dynload/_ctypes.cpython-312-x86_64-linux-gnu.so
+      patchelf --force-rpath --set-rpath "\$ORIGIN/lib:\$ORIGIN/../../$CRAFT_ARCH_TRIPLET_BUILD_FOR:$RPATH" \
+                                          $CRAFT_PRIME/usr/lib/python3.12/lib-dynload/_ctypes.cpython-312-$CPYTHON_ARCH-linux-gnu.so
 
       for file in $(find $CRAFT_PRIME/usr/share/surl-venv/lib/python3.12/site-packages/ -name *.so); do
           patchelf --force-rpath --set-rpath $RPATH $file
