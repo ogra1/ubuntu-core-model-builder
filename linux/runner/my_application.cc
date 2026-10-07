@@ -87,7 +87,43 @@ static void my_application_activate(GApplication* application) {
     gtk_window_set_title(window, "Model Builder");
   }
 
-  gtk_window_set_default_size(window, 1280, 720);
+  // Choose an initial window size that looks right on any display,
+  // including HiDPI / fractionally-scaled ones. Both
+  // gtk_window_set_default_size() and gdk_monitor_get_geometry() work in
+  // *logical* pixels (on X11 the screen is already divided by GDK_SCALE,
+  // on Wayland the geometry is the output's logical size), so the units
+  // match up and the window can be sized as a plain fraction of the
+  // primary monitor. We deliberately stay just below 80% of the screen so
+  // GNOME Shell does not auto-maximize the window on startup.
+  {
+    const int target_frac_w = 79; // ~79% of screen width
+    const int target_frac_h = 79; // ~79% of screen height
+    int mon_w = 1280, mon_h = 720;
+    GdkDisplay* display = gtk_widget_get_display(GTK_WIDGET(window));
+    if (display != NULL) {
+      GdkMonitor* monitor = NULL;
+      int n_monitors = gdk_display_get_n_monitors(display);
+      for (int i = 0; i < n_monitors; i++) {
+        GdkMonitor* m = gdk_display_get_monitor(display, i);
+        if (gdk_monitor_is_primary(m)) {
+          monitor = m;
+          break;
+        }
+      }
+      if (monitor == NULL && n_monitors > 0) {
+        // No primary marked; fall back to the first monitor.
+        monitor = gdk_display_get_monitor(display, 0);
+      }
+      if (monitor != NULL) {
+        GdkRectangle geometry;
+        gdk_monitor_get_geometry(monitor, &geometry);
+        mon_w = geometry.width;
+        mon_h = geometry.height;
+      }
+    }
+    gtk_window_set_default_size(window, mon_w * target_frac_w / 100,
+                                mon_h * target_frac_h / 100);
+  }
 
   g_autoptr(FlDartProject) project = fl_dart_project_new();
   fl_dart_project_set_dart_entrypoint_arguments(
