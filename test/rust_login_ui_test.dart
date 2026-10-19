@@ -1,6 +1,7 @@
 // Widget test: drives the *real* UI — the Account step's "Sign in" button
 // through the in-app credentials dialog and the 2FA dialog — against the
-// same mock store the e2e suite uses (test/support/mock_store.py) and the
+// same mock store the e2e suite uses (the `snapstore_auth` package's
+// tool/mock_store.py) and the
 // real native Rust library (libsnapstore_auth).
 //
 // Skips automatically when the native library is not available (the app
@@ -42,6 +43,7 @@ import 'package:ubuntu_core_model_builder/models/wizard_step.dart';
 import 'package:ubuntu_core_model_builder/pages/account_page.dart';
 import 'package:ubuntu_core_model_builder/services/ffi/snapstore_auth_client.dart';
 import 'package:ubuntu_core_model_builder/services/rust_store_service.dart';
+import 'support/mock_store_path.dart';
 
 const _mockStore = 'http://127.0.0.1:8472';
 const _password = 's3cret';
@@ -182,7 +184,7 @@ void main() {
     mock = await Process.start(
         'python3',
         [
-          'test/support/mock_store.py',
+          mockStorePath(),
           '--port',
           '8472',
           '--two-factor',

@@ -1,6 +1,7 @@
 // End-to-end test for the Rust-backed store services (RustStoreService /
 // RustKeyService / RustStoreCatalogService) against the real native library and a
-// local mock store (test/support/mock_store.py).
+// local mock store (the `snapstore_auth` package's tool/mock_store.py,
+// resolved via test/support/mock_store_path.dart).
 //
 // Skips automatically when the native library is not available (the
 // adapters degrade gracefully in that case anyway):
@@ -18,6 +19,7 @@ import 'package:ubuntu_core_model_builder/services/ffi/snapstore_auth_client.dar
 import 'package:ubuntu_core_model_builder/services/rust_key_service.dart';
 import 'package:ubuntu_core_model_builder/services/rust_store_catalog_service.dart';
 import 'package:ubuntu_core_model_builder/services/rust_store_service.dart';
+import 'support/mock_store_path.dart';
 
 const _mockStore = 'http://127.0.0.1:8471';
 
@@ -32,7 +34,7 @@ void main() {
     }
     mock = await Process.start('python3',
         [
-          'test/support/mock_store.py',
+          mockStorePath(),
           '--port',
           '8471',
           '--two-factor',

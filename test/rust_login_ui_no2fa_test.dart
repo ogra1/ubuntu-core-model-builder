@@ -1,6 +1,7 @@
 // Widget test (no-2FA mode): drives the *real* UI — the Account step's
 // "Sign in" button through the in-app credentials dialog — against the
-// mock store in NO-TWO-FACTOR mode (test/support/mock_store.py without
+// mock store (the `snapstore_auth` package's tool/mock_store.py, resolved
+// via test/support/mock_store_path.dart) in NO-TWO-FACTOR mode (without
 // --two-factor) and the real native Rust library (libsnapstore_auth).
 //
 // In no-2FA mode the mock validates the password on the FIRST discharge:
@@ -37,6 +38,7 @@ import 'package:ubuntu_core_model_builder/models/wizard_step.dart';
 import 'package:ubuntu_core_model_builder/pages/account_page.dart';
 import 'package:ubuntu_core_model_builder/services/ffi/snapstore_auth_client.dart';
 import 'package:ubuntu_core_model_builder/services/rust_store_service.dart';
+import 'support/mock_store_path.dart';
 
 const _mockStore = 'http://127.0.0.1:8473';
 const _password = 's3cret';
@@ -137,7 +139,7 @@ void main() {
     mock = await Process.start(
         'python3',
         [
-          'test/support/mock_store.py',
+          mockStorePath(),
           '--port',
           '8473',
           '--no-two-factor',

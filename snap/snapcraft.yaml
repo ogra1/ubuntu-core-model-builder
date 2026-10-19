@@ -106,9 +106,14 @@ parts:
       - zip
     override-prime: ""
   snapstore-auth-rust:
-    # Builds the interactive Snap Store auth backend (libsnapstore_auth.so)
-    # that the app loads via dart:ffi (lib/services/ffi/snapstore_auth_client.dart).
+    # Builds the shared Snap Store auth backend (libsnapstore_auth.so) that
+    # the app loads via dart:ffi (see lib/services/ffi/snapstore_auth_client.dart,
+    # which re-exports package:snapstore_auth). The crate + Dart client + mock
+    # store now live in their own repo so other Flutter apps can reuse them.
     #
+    # Source: the shared repo (same ref the pubspec git dependency pins).
+    # For fully reproducible builds, prefer `source-commit` over a branch.
+
     # Self-contained crate: pure-Rust TLS (rustls/ring -- no OpenSSL) and the
     # built .so links only against libc/libm/libgcc_s, so no stage-packages
     # are needed; in a classic snap the base libraries resolve from the host
@@ -120,7 +125,9 @@ parts:
     # which is where the Dart FFI client probes first (next to the
     # executable); SNAPSTORE_AUTH_LIB is set in the app environment as well.
     plugin: nil
-    source: rust
+    source: https://github.com/ogra1/snapstore-auth.git
+    source-type: git
+    source-branch: main
     build-packages:
       - build-essential   # cc for ring's C shim
       - curl
@@ -138,8 +145,8 @@ parts:
       cargo --version
 
       # Test the library and build the cdylib.
-      # (The tests/mock_http.rs repro is excluded: it hardcodes a path on
-      # the developer machine.)
+      # (The tests/mock_http.rs repro uses the repo's own copy of
+      # tool/mock_store.py, resolved relative to the part's source dir.)
       # Launchpad build containers run behind a firewall proxy: reqwest
       # honors HTTP_PROXY even for loopback, so exempt 127.0.0.1/localhost
       # for the in-process fake store (the tests set this themselves too;
@@ -156,10 +163,10 @@ parts:
           "$CRAFT_PART_INSTALL/bin/libsnapstore_auth.so"
 
       # Fail fast if any C-ABI entry point the Dart binding resolves
-      # (lib/services/ffi/snapstore_auth_client.dart) is missing from the
-      # built library. The symbol list is dumped to a file first: under
-      # `set -o pipefail` (snapcraft enables it) the early exit of
-      # `grep -q` can SIGPIPE `nm` (exit 141) and fail the part.
+      # (package:snapstore_auth) is missing from the built library. The
+      # symbol list is dumped to a file first: under `set -o pipefail`
+      # (snapcraft enables it) the early exit of `grep -q` can SIGPIPE `nm`
+      # (exit 141) and fail the part.
       LIB="$CRAFT_PART_INSTALL/bin/libsnapstore_auth.so"
       nm -D "$LIB" > "$CRAFT_PART_BUILD/exports.txt"
       for sym in auth_account_info auth_authorization_header auth_cancel \

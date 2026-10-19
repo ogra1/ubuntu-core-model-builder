@@ -11,7 +11,16 @@ dependencies:
     sdk: flutter
   yaru: ^10.2.0
   yaru_icons: ^2.2.0
-  ffi: ^2.1.0
+  # Snap Store auth backend (Rust cdylib + Dart FFI client), shared with
+  # other Flutter apps. The native library (libsnapstore_auth.so) is built
+  # by the snapstore-auth-rust snapcraft part / scripts/build_rust_backend.sh
+  # and primed next to the app binary (see lib/services/ffi/snapstore_auth_client.dart).
+  # Pinned for reproducible snap builds once the shared repo is published
+  # (bump this ref to adopt new auth-backend releases).
+  snapstore_auth:
+    git:
+      url: https://github.com/ogra1/snapstore-auth.git
+
   http: ^1.1.0
   process_run: ^1.3.4+1
   path_provider: ^2.1.1

@@ -25,8 +25,10 @@ prime/
 # OS
 .DS_Store
 
-# Rust auth backend (rust/) -- local build artifacts
-rust/target/
+# Rust auth backend: the crate lives in the shared snapstore-auth repo;
+only the staged shared library (built by scripts/build_rust_backend.sh)
+is produced in this tree.
+linux/rust/*.so
 
 # Local review diffs (generated per test step; not part of the app)
 *.diff
