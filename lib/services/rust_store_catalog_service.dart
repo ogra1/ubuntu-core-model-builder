@@ -24,6 +24,7 @@ import 'store_models.dart'
         BrandStore,
         StoreCatalogSnap,
         StoreAuthException,
+        StoreAuthExpiredException,
         StoreUnavailableException;
 
 class RustStoreCatalogService {
@@ -42,6 +43,9 @@ class RustStoreCatalogService {
       // Blocking FFI + HTTP — run off the UI isolate.
       raw = await Isolate.run(() => session.auth.accountInfoRaw());
     } on SnapstoreAuthError catch (e) {
+      if (_isRejectedSession(e)) {
+        throw StoreAuthExpiredException(_authMessage(e));
+      }
       throw StoreAuthException(_authMessage(e));
     } catch (e) {
       throw StoreUnavailableException('Store lookup failed: $e');
@@ -61,9 +65,8 @@ class RustStoreCatalogService {
     try {
       raw = await Isolate.run(() => session.auth.storeSnapsRaw(storeId));
     } on SnapstoreAuthError catch (e) {
-      if (e.kind == 'http' &&
-          (e.httpStatus == 401 || e.httpStatus == 403)) {
-        throw StoreAuthException(_authMessage(e));
+      if (_isRejectedSession(e)) {
+        throw StoreAuthExpiredException(_authMessage(e));
       }
       throw StoreUnavailableException(_transportMessage(e));
     } catch (e) {
@@ -107,7 +110,30 @@ class RustStoreCatalogService {
     }
   }
 
+  /// Force a fresh interactive login even when the in-process session still
+  /// reads `succeeded` but the store no longer honours it (an
+  /// expired/invalid macaroon). [webLogin] is a no-op in that case, so the
+  /// re-login recovery path (after a [StoreAuthExpiredException]) must use
+  /// this instead.
+  ///
+  /// Returns the signed-in account, or `null` when the user cancelled or the
+  /// re-login failed.
+  Future<StoreAccount?> reauthenticate({required BuildContext context}) async {
+    final svc = RustStoreService();
+    await svc.loginInteractive(context: context);
+    return svc.getCurrentAccount();
+  }
+
   // -- internals -------------------------------------------------------------
+
+  /// `true` when [e] means the store rejected the (live) session's macaroon —
+  /// 401 (expired/invalid) or 403 (present but not accepted). By the time a
+  /// call reaches the network, [_requireSession] has already confirmed the
+  /// session reads `succeeded`, so a rejection here means the credentials
+  /// went stale, not that the user is signed out.
+  static bool _isRejectedSession(SnapstoreAuthError e) =>
+      e.kind == 'http' &&
+      (e.httpStatus == 401 || e.httpStatus == 403);
 
   SnapstoreAuthSession _requireSession() {
     final session = SnapstoreAuthSession.current;

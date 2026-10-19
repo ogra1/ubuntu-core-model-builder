@@ -430,6 +430,27 @@ class _MetadataPageState extends State<MetadataPage> {
       List<BrandStore> stores;
       try {
         stores = await catalog.listStores();
+      } on StoreAuthExpiredException {
+        // Signed in, but the store stopped honouring the session (expired
+        // macaroon). webLogin would be a no-op here, so force a real
+        // re-login and retry once.
+        if (!context.mounted) rethrow;
+        state.setBusy(true, message: 'Session expired — signing in again…');
+        final acct = await catalog.reauthenticate(context: context);
+        if (acct == null) {
+          // Cancelled: the session is logged out now. Reflect that and send
+          // the user back to Account, where later steps are gated until they
+          // sign in again.
+          state.setAccount(null);
+          state.requestStep(WizardStep.account);
+          if (context.mounted) {
+            _error(context, 'Sign-in was cancelled. Sign in again to continue.');
+          }
+          return;
+        }
+        state.setAccount(acct);
+        state.setBusy(true, message: 'Fetching your stores...');
+        stores = await catalog.listStores();
       } on StoreAuthException {
         if (!context.mounted) rethrow;
         state.setBusy(true, message: 'Signing you in to the store...');

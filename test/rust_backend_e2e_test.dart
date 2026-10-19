@@ -18,6 +18,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ubuntu_core_model_builder/services/ffi/snapstore_auth_client.dart';
 import 'package:ubuntu_core_model_builder/services/rust_key_service.dart';
 import 'package:ubuntu_core_model_builder/services/rust_store_catalog_service.dart';
+import 'package:ubuntu_core_model_builder/services/store_models.dart' show StoreAuthExpiredException;
 import 'package:ubuntu_core_model_builder/services/rust_store_service.dart';
 import 'support/mock_store_path.dart';
 
@@ -191,6 +192,32 @@ void main() {
       final snaps = await catalog.listStoreSnaps('mock-brand');
       expect(snaps.map((e) => e.name),
           containsAll(['mock-gadget', 'mock-kernel']));
+
+      // Expired-macaroon simulation: the store stops honouring the session
+      // while the in-process state machine still reads `succeeded`. The
+      // catalog service must surface this as the typed
+      // StoreAuthExpiredException the pages' re-login recovery relies on
+      // (NOT the generic StoreAuthException), and getCurrentAccount() must
+      // read null (its whoami 401s). try/finally (not addTearDown) so the
+      // shared mock is restored even on an unexpected failure.
+      // The flag is off now: reaching `succeeded` above required the mock
+      // to accept a discharge, which is impossible while rejecting.
+      await toggleRejectMacaroon(_mockStore);
+      try {
+        expect(await store.getCurrentAccount(), isNull,
+            reason: 'whoami 401s, so the account reads null even though the '
+                'in-process session still reports succeeded');
+        await expectLater(catalog.listStores(),
+            throwsA(isA<StoreAuthExpiredException>()));
+        await expectLater(catalog.listStoreSnaps('mock-brand'),
+            throwsA(isA<StoreAuthExpiredException>()));
+      } finally {
+        await toggleRejectMacaroon(_mockStore);
+      }
+      // Healthy again: the same calls succeed with NO re-login (the session
+      // itself was never disturbed by the rejection).
+      expect(await catalog.listStores(), isNotEmpty);
+      expect(await catalog.listStoreSnaps('mock-brand'), isNotEmpty);
     });
 
     test('registered key fingerprints via RustKeyService', () async {
@@ -272,6 +299,22 @@ const _fixtureRoot =
     'MDAyY2xvY2F0aW9uIGh0dHBzOi8vZGFzaGJvYXJkLnNuYXBjcmFmdC5pbwowMDE5aWRlbnRpZmllciByb290LWlkLTEKMDAxMGNpZCBjaWQtMDAxCjAwNTF2aWQgDVQZMibgN_0yFc5ogte1xjxpKc5XmjPtPUWWYjviSULNh5-nmPcN1s6-h-c8qSgmFQvO8Iy__a9fehkpatZve0PCpRiUI3hNCjAwMzhjbCBodHRwczovL2xvZ2luLnVidW50dS5jb20vYXBpL3YyL3Rva2Vucy9kaXNjaGFyZ2UKMDAyZnNpZ25hdHVyZSC0CqFfWTisBnfUsDI0y9i5xkTUuL-BFCOwFXL2EJj9dwo';
 const _fixtureDischarge =
     'MDAyNmxvY2F0aW9uIGh0dHBzOi8vbG9naW4udWJ1bnR1LmNvbQowMDFiaWRlbnRpZmllciBkaXNjaGFyZ2UtMQowMDBmc2lnbmF0dXJlIAo';
+
+/// Toggles the mock's "macaroon no longer honoured" mode (its /__reject
+/// control endpoint). Paired calls in a try/finally restore the original
+/// (off) state for the rest of the suite.
+Future<void> toggleRejectMacaroon(String base) async {
+  final client = HttpClient();
+  try {
+    final req = await client.postUrl(Uri.parse('$base/__reject'));
+    final res = await req.close();
+    final status = res.statusCode;
+    await res.drain<void>();
+    if (status != 200) throw StateError('mock /__reject returned $status');
+  } finally {
+    client.close(force: true);
+  }
+}
 
 Future<AuthState> _waitStates(
     SnapstoreAuthSession session, Set<AuthState> targets, Duration timeout) async {

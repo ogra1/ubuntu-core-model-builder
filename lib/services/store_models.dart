@@ -42,6 +42,17 @@ class StoreAuthException implements Exception {
   String toString() => message;
 }
 
+/// Thrown when the store rejected a *live* session's macaroon (HTTP 401/403)
+/// — i.e. the in-process auth state still reads `succeeded` but the store no
+/// longer honours the credentials (expired/invalid). A subtype of
+/// [StoreAuthException] so existing `on StoreAuthException` handlers keep
+/// compiling, but distinct enough for callers to force a real re-login
+/// (`RustStoreCatalogService.reauthenticate`) rather than the no-op
+/// `RustStoreCatalogService.webLogin`.
+class StoreAuthExpiredException extends StoreAuthException {
+  StoreAuthExpiredException(super.message);
+}
+
 class StoreUnavailableException implements Exception {
   final String message;
   StoreUnavailableException([this.message = 'Store lookup is unavailable.']);

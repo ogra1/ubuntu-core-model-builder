@@ -156,6 +156,20 @@ class _SnapsPageState extends State<SnapsPage> {
       List<StoreCatalogSnap> snaps;
       try {
         snaps = await _storeCatalog.listStoreSnaps(storeId);
+      } on StoreAuthExpiredException {
+        // Signed in, but the store stopped honouring the session (expired
+        // macaroon). webLogin would be a no-op here, so force a real
+        // re-login and retry once.
+        if (!mounted) return;
+        final acct = await _storeCatalog.reauthenticate(context: context);
+        if (acct == null) {
+          if (mounted) {
+            _errorSnack('Store sign-in was cancelled. Sign in again to browse '
+                'this store.');
+          }
+          return;
+        }
+        snaps = await _storeCatalog.listStoreSnaps(storeId);
       } on StoreAuthException {
         // Not authenticated (or token lacks the permissions). Disclose and
         // offer to sign in with the required scope.
