@@ -5,8 +5,7 @@
 //
 // The Rust auth backend is not initialized in widget tests (main() does
 // that); RustStoreService degrades gracefully to "not signed in".
-import 'dart:ui';
-
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ubuntu_core_model_builder/main.dart';
 
@@ -27,7 +26,12 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
 
     // App bar + the first wizard step's headline.
-    expect(find.text('Model Builder'), findsOneWidget);
+    // The app bar shows the app name. Scope to the AppBar: the sidebar
+    // header (home_page.dart) also renders a "Model Builder" brand label, so
+    // an unscoped find.text would match two and fail findsOneWidget.
+    expect(find.descendant(of: find.byType(AppBar),
+            matching: find.text('Model Builder')),
+        findsOneWidget);
     expect(find.text('Getting Started'), findsOneWidget);
     expect(find.text('Sign in'), findsOneWidget);
   });

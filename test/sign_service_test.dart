@@ -38,8 +38,15 @@ void main() {
   /// body; [sig] is baked in as the shell variable [extracted] (default SIG)
   /// so stubs can reference the signature value.
   void installStub(String script, {String sig = kSig}) {
-    fakeSnap.writeAsStringSync(
-        '#!/usr/bin/env bash\nSIG="$sig"\n$script\n');
+    // The real `snap sign` reads ALL of stdin before doing anything
+    // (cmd_sign.go: io.ReadAll(Stdin) precedes the key lookup). A stub that
+    // never consumes stdin would exit while the service writes the JSON
+    // header, racing a broken pipe (SocketException EPIPE). Prepend a drain
+    // unless the stub already consumes stdin (the header-capture stub uses
+    // `cat > "$3"`).
+    final body =
+        script.contains('cat >') ? script : 'cat > /dev/null\n$script';
+    fakeSnap.writeAsStringSync('#!/usr/bin/env bash\nSIG="$sig"\n$body\n');
     Process.runSync('chmod', ['+x', fakeSnap.path]);
   }
 

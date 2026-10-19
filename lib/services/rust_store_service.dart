@@ -222,26 +222,44 @@ class RustStoreService {
       throw CredentialImportException('No credentials provided.');
     }
     final session = await _ensureSession();
+    // Clear stale events so the one consumed below is unambiguously the
+    // verdict of THIS import (a prior flow may have left one behind).
+    session.auth.drainEvents();
     try {
       session.auth.importExportedLogin(trimmed);
     } on SnapstoreAuthError catch (e) {
       throw CredentialImportException(_humanError(e));
     }
-    // Wait for the machine to process the import (validate + persist).
-    final s = await _waitForState(
-        session, const {AuthState.succeeded, AuthState.idle},
-        const Duration(seconds: 10));
-    if (s != AuthState.succeeded) {
-      final events = session.auth.drainEvents();
-      final detail = events
-          .whereType<FailedEvent>()
-          .map((e) => _humanError(e.error))
-          .join('; ');
-      throw CredentialImportException(
-          detail.isEmpty ? 'Credentials could not be validated.' : detail);
+    // Wait for the driver's verdict. Waiting on state alone is racy: the
+    // machine is `idle` both before the driver picks the import up AND
+    // after a failed one (and the FFI call may return before the driver's
+    // task loop has processed it under load), so only the emitted event
+    // (Succeeded / Failed) or the state moving to `succeeded` is a
+    // reliable signal — the same pattern `restore()` uses.
+    final auth = session.auth;
+    final deadline = DateTime.now().add(const Duration(seconds: 10));
+    String? failureDetail;
+    while (DateTime.now().isBefore(deadline)) {
+      for (final e in auth.drainEvents()) {
+        if (e is SucceededEvent) {
+          await _persistLatestCredentials();
+          return getCurrentAccount();
+        }
+        if (e is FailedEvent) {
+          failureDetail = (failureDetail == null
+              ? ''
+              : '$failureDetail; ') + _humanError(e.error);
+        }
+      }
+      if (auth.state == AuthState.succeeded) {
+        await _persistLatestCredentials();
+        return getCurrentAccount();
+      }
+      if (failureDetail != null) break; // terminal verdict; no more coming
+      await Future<void>.delayed(const Duration(milliseconds: 50));
     }
-    await _persistLatestCredentials();
-    return getCurrentAccount();
+    throw CredentialImportException(
+        failureDetail ?? 'Credentials could not be validated.');
   }
 
   // -- internals -------------------------------------------------------------
@@ -285,17 +303,6 @@ class RustStoreService {
     }
   }
 
-  Future<AuthState> _waitForState(SnapstoreAuthSession session,
-      Set<AuthState> targets, Duration timeout) async {
-    final deadline = DateTime.now().add(timeout);
-    while (DateTime.now().isBefore(deadline)) {
-      final s = session.auth.state;
-      if (targets.contains(s)) return s;
-      await Future<void>.delayed(const Duration(milliseconds: 50));
-    }
-    return session.auth.state;
-  }
-
   static String _humanError(SnapstoreAuthError e) {
     if (e.kind == 'http' && e.httpStatus != null) {
       return '${SnapstoreServiceErrors.cleanDetail(e.detail)} '
@@ -329,13 +336,23 @@ const _pollInterval = Duration(milliseconds: 150);
 /// emitted `needs_2fa_code` for the code phase).
 class _PhaseWatcher {
   _PhaseWatcher(this._session, this._isCredentialsPhase) {
-    _tick();
+    // Deliberately NO synchronous initial tick: the first poll runs one
+    // interval later, by which time (a) [start] has attached the failure
+    // callback, and (b) the Rust driver has had a chance to move past the
+    // pre-submit state — exactly the state this watcher must not misread
+    // as "flow ended" (see the idle branch in [_tick]).
     _timer = Timer.periodic(_pollInterval, (_) => _tick());
   }
+
+  /// Bounds the pathological case where the Rust driver never processes
+  /// the submitted command: the watcher then reports a retryable error
+  /// instead of polling (and showing "Signing in…") forever.
+  static const _watchdog = Duration(seconds: 60);
 
   final SnapstoreAuthSession _session;
   final bool _isCredentialsPhase;
   late final Timer _timer;
+  final DateTime _deadline = DateTime.now().add(_watchdog);
   final Completer<bool> result = Completer<bool>();
 
   void Function(String)? _onFailure;
@@ -372,7 +389,14 @@ class _PhaseWatcher {
       return;
     }
     if (s == AuthState.idle) {
-      // Flow ended without success: report (retryable) or give up.
+      // A real terminal transition always emits an event (failed /
+      // cancelled / succeeded), so ONLY a fresh event is a conclusion.
+      // An idle with an empty event buffer is NOT one: the Rust driver
+      // processes submitted commands on its own task loop, so right after
+      // a (re)submit the state can still report the pre-submit `idle` —
+      // concluding on that would crash the retry (it used to) or pop the
+      // dialog while the flow is about to start. Keep polling; the
+      // watchdog bounds the pathological "driver never wakes up" case.
       var handled = false;
       for (final e in _session.auth.drainEvents()) {
         if (e is FailedEvent && !handled) {
@@ -380,9 +404,8 @@ class _PhaseWatcher {
           final fn = _onFailure;
           if (fn != null) {
             fn(SnapstoreServiceErrors.human(e.error));
-            // The dialog stays open for an in-place retry. Stop the poller:
-            // the next tick would see idle + an EMPTY event buffer and
-            // misread that as "flow ended", auto-closing the dialog.
+            // The dialog stays open for an in-place retry; no point
+            // polling while it shows the inline error.
             _timer.cancel();
             return;
           }
@@ -392,7 +415,16 @@ class _PhaseWatcher {
           return;
         }
       }
-      if (!handled) _done(false);
+      if (DateTime.now().isAfter(_deadline)) {
+        _timer.cancel();
+        final fn = _onFailure;
+        if (fn != null) {
+          fn('The sign-in service did not respond. Please try again.');
+        } else {
+          _done(false);
+        }
+        return;
+      }
       return;
     }
     // While the code phase is in flight, a *fresh* re-emitted

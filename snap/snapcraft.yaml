@@ -27,7 +27,7 @@ lint:
     - classic:
       - usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/dri/libdril_dri.so
       - usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libffi.so.8.1.4
-      - usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libgallium-25.2.8-0ubuntu0.24.04.2.so
+      - usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libgallium-25.2.8-0ubuntu0.24.04.4.so
       - usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libwayland-client.so.0.22.0
     - library:
       - usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libEGL.so.1.1.0
@@ -194,9 +194,11 @@ parts:
 
       flutter pub get
       # required for the test suite
-      # export SNAPSTORE_AUTH_LIB=$CRAFT_STAGE/bin/libsnapstore_auth.so
+      export SNAPSTORE_AUTH_LIB=$CRAFT_STAGE/bin/libsnapstore_auth.so
       # run the whole test suite
-      # flutter test
+      flutter test
+
+      # build the app
       flutter build linux --release -v
       cp -r build/linux/*/release/bundle/* $CRAFT_PART_INSTALL/bin/
   libraries:
