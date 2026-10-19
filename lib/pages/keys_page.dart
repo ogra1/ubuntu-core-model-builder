@@ -6,6 +6,7 @@ import '../theme/status_colors.dart';
 import '../models/wizard_step.dart';
 import '../models/signing_key.dart';
 import '../services/rust_key_service.dart';
+import '../services/rust_store_service.dart';
 
 class KeysPage extends StatefulWidget {
   final WizardState state;
@@ -152,6 +153,36 @@ class _KeysPageState extends State<KeysPage> {
     widget.state.busy = true;
     try {
       await op();
+    } on KeyAuthExpiredException {
+      // The store rejected the session's macaroon (expired/invalid) even
+      // though the app still believes it's signed in. Re-run the
+      // interactive login (email/password/2FA popup) and retry the op
+      // once, instead of just surfacing the raw store error.
+      if (!mounted) return;
+      widget.state.setBusy(true, message: 'Session expired — signing in again…');
+      try {
+        final store = RustStoreService();
+        await store.loginInteractive(context: context);
+        final acct = await store.getCurrentAccount();
+        if (acct == null) {
+          // Cancelled (or failed): the earlier `registerKey` 401 had
+          // already logged the in-process session out. Reflect that in
+          // the wizard state and send the user back to Account, where
+          // every later step (including this one) is gated until they
+          // sign in again — rather than letting them keep going on a
+          // page that believes a key is selectable.
+          widget.state.setAccount(null);
+          widget.state.requestStep(WizardStep.account);
+          _showError('Sign-in was cancelled. Sign in again to continue.');
+          return;
+        }
+        widget.state.setAccount(acct);
+        await op();
+      } on KeyException catch (e) {
+        _showError(e.message);
+      } catch (e) {
+        _showError('Sign-in failed: $e');
+      }
     } on KeyException catch (e) {
       _showError(e.message);
     } catch (e) {

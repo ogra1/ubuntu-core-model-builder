@@ -151,8 +151,25 @@ class RustKeyService {
     try {
       await Isolate.run(() => session.auth.registerKey(assertion));
     } catch (e) {
+      if (_isExpiredCredential(e)) {
+        throw KeyAuthExpiredException(_friendly(e));
+      }
       throw KeyException(_friendly(e));
     }
+  }
+
+  /// `true` when [e] signals that the store rejected the macaroon pair
+  /// (expired/invalid), i.e. the in-process session still *thinks* it is
+  /// signed in but the store no longer honours its credentials. The 401 the
+  /// store returns for `account-key` without a valid `Authorization` header
+  /// is the sole trustworthy signal here (the body wording isn't a stable
+  /// contract) — callers should re-run the interactive login rather than
+  /// just surfacing the error.
+  static bool _isExpiredCredential(Object e) {
+    if (e is SnapstoreAuthError) {
+      return e.kind == 'http' && e.httpStatus == 401;
+    }
+    return false;
   }
 
   /// Creates (if needed) then registers. The create step prompts for the
@@ -250,4 +267,13 @@ class KeyException implements Exception {
   KeyException(this.message);
   @override
   String toString() => message;
+}
+
+/// Thrown by [RustKeyService.registerKey] when the store rejects the
+/// in-process session's macaroon (expired/invalid) with a 401. The
+/// in-process [AuthState] still reads `succeeded`, so callers should offer
+/// (or run) the interactive login again and retry, rather than just
+/// displaying [message].
+class KeyAuthExpiredException extends KeyException {
+  KeyAuthExpiredException(super.message);
 }

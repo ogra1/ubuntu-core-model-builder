@@ -38,7 +38,14 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _onStateChanged() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    final pending = _state.pendingNavigation;
+    if (pending != null) {
+      _state.pendingNavigation = null;
+      setState(() => _current = pending);
+      return;
+    }
+    setState(() {});
   }
 
   /// Callback for editing pages: invalidate any prior signature, then refresh.

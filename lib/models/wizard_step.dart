@@ -43,6 +43,16 @@ class WizardState extends ChangeNotifier {
   String? signedAssertion;
   String? busyMessage;
 
+  /// Step a page wants [HomePage] to jump to on the next frame (e.g. the
+  /// Keys step sending the user back to Account after a cancelled re-login
+  /// logged them out). Cleared by [HomePage] once consumed.
+  WizardStep? pendingNavigation;
+
+  void requestStep(WizardStep step) {
+    pendingNavigation = step;
+    notifyListeners();
+  }
+
   VoidCallback? busyCancelCallback;
 
   bool _busy = false;
