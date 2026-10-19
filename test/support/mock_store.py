@@ -68,6 +68,19 @@ UNAUTHENTICATED_BODY = json.dumps({
     "message": "Authorization: Macaroon required",
 })
 
+# Returned for authenticated calls when --reject-macaroon is set: simulates a
+# session whose macaroon pair has expired / is no longer honoured, while the
+# in-process state machine still believes it is signed in. This is exactly the
+# condition the "recover from expired macaroon on key registration" fix must
+# handle (see RustKeyService._isExpiredCredential / KeyAuthExpiredException).
+EXPIRED_MACAROON_BODY = json.dumps({
+    "code": "EXPIRED_MACAROON",
+    "message": "macaroon is expired, try to refresh it",
+    "error_list": [
+        {"code": "expired-macaroon", "message": "macaroon is expired, try to refresh it"}
+    ],
+})
+
 # Account object — mirrors what snapcraft's `whoami` / `keys` commands parse.
 ACCOUNT_INFO_BODY = {
     "account_id": "DEADBEEF1234DEADBEEF1234DEADBEEF1234DEAD",
@@ -188,9 +201,26 @@ def route(method: str, path: str, headers: dict, payload: dict) -> tuple[int, st
             return 401, TWO_FACTOR_BODY
         return 200, json.dumps({"discharge_macaroon": DISCHARGE_MACAROON})
 
+    # --- test control (public: no macaroon, used by the Dart e2e tests) ---
+    if method == "GET" and path == "/__registered":
+        # The account-key assertions this mock has recorded (tests assert
+        # the upload reached the store). Not part of the real store API.
+        return 200, json.dumps({"keys": REGISTERED_KEYS})
+
+    if method == "POST" and path == "/__reject":
+        # Flip the "macaroon no longer honoured" mode at runtime (tests
+        # log in against a healthy store, then simulate expiry). Not part
+        # of the real store API.
+        CONFIG["reject_macaroon"] = not CONFIG["reject_macaroon"]
+        return 200, json.dumps({"reject_macaroon": CONFIG["reject_macaroon"]})
+
     # --- authenticated ---
     if not has_macaroon(headers):
         return 401, UNAUTHENTICATED_BODY
+    if CONFIG["reject_macaroon"]:
+        # The request carries a macaroon (a logged-in session) but the store
+        # no longer honours it — 401 on every authenticated endpoint.
+        return 401, EXPIRED_MACAROON_BODY
 
     if method == "GET" and path == "/api/v2/tokens/whoami":
         return 200, json.dumps(ACCOUNT_INFO_BODY)
@@ -231,6 +261,9 @@ def main() -> None:
                          "answered with 401 BAD_CREDENTIALS directly")
     ap.add_argument("--good-code", default="654321",
                     help="the 2FA code that succeeds (default 654321)")
+    ap.add_argument("--reject-macaroon", action="store_true",
+                    help="authenticated endpoints answer 401 'macaroon is "
+                         "expired' (simulates an expired session; login still works)")
     ap.add_argument("--password", default="s3cret",
                     help="the password that succeeds (default s3cret)")
     args = ap.parse_args()
@@ -239,6 +272,7 @@ def main() -> None:
         "two_factor": args.two_factor,
         "good_code": args.good_code,
         "password": args.password,
+        "reject_macaroon": args.reject_macaroon,
     })
 
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

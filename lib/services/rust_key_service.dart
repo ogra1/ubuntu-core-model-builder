@@ -137,8 +137,16 @@ class RustKeyService {
       throw KeyException('Sign in to the Snap Store first.');
     }
 
-    // 1. Account id (Rust whoami — one HTTP request).
-    final info = await _whoami(session);
+    // 1. Account id (Rust whoami — one HTTP request). This is the FIRST
+    //    authenticated call, so a store that no longer honours the
+    //    session's macaroon 401s HERE, before the upload below — the
+    //    expired-credential handling must cover both steps.
+    final AccountInfo info;
+    try {
+      info = await _whoami(session);
+    } catch (e) {
+      _throwKeyError(e);
+    }
     final accountId = info.id;
     if (accountId.isEmpty) {
       throw KeyException('Could not determine the account id.');
@@ -151,11 +159,20 @@ class RustKeyService {
     try {
       await Isolate.run(() => session.auth.registerKey(assertion));
     } catch (e) {
-      if (_isExpiredCredential(e)) {
-        throw KeyAuthExpiredException(_friendly(e));
-      }
-      throw KeyException(_friendly(e));
+      _throwKeyError(e);
     }
+  }
+
+  /// Converts a store/tool error into the right [KeyException] type and
+  /// throws it (never returns): an expired/invalid macaroon (HTTP 401)
+  /// becomes [KeyAuthExpiredException] so callers can re-run the
+  /// interactive login and retry; anything else becomes a plain
+  /// [KeyException].
+  Never _throwKeyError(Object e) {
+    if (e is SnapstoreAuthError && _isExpiredCredential(e)) {
+      throw KeyAuthExpiredException(_friendly(e));
+    }
+    throw KeyException(_friendly(e));
   }
 
   /// `true` when [e] signals that the store rejected the macaroon pair
@@ -165,12 +182,8 @@ class RustKeyService {
   /// is the sole trustworthy signal here (the body wording isn't a stable
   /// contract) — callers should re-run the interactive login rather than
   /// just surfacing the error.
-  static bool _isExpiredCredential(Object e) {
-    if (e is SnapstoreAuthError) {
-      return e.kind == 'http' && e.httpStatus == 401;
-    }
-    return false;
-  }
+  static bool _isExpiredCredential(Object e) =>
+      e is SnapstoreAuthError && e.kind == 'http' && e.httpStatus == 401;
 
   /// Creates (if needed) then registers. The create step prompts for the
   /// passphrase in the system pinentry dialog; the register step runs through
