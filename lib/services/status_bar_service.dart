@@ -158,10 +158,8 @@ class _MessageRow extends StatelessWidget {
         Icon(icon, size: 16, color: iconColor),
         const SizedBox(width: 8),
         Flexible(
-          child: Text(
+          child: TruncatingTooltipText(
             message.text,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
             style: theme.textTheme.bodySmall?.copyWith(color: textColor),
           ),
         ),
@@ -177,6 +175,57 @@ class _MessageRow extends StatelessWidget {
       ],
     );
   }
+}
+
+/// Single-line text that ellipsizes when it doesn't fit and — only then —
+/// gains a [Tooltip] revealing the full text on hover.
+///
+/// The decision is based on actual rendering (measured with a
+/// [TextPainter] at the available width and the ambient text scaler), not
+/// on the string's length: short messages never get a tooltip, long ones
+/// always do, regardless of window width.
+class TruncatingTooltipText extends StatelessWidget {
+  final String text;
+  final TextStyle? style;
+
+  const TruncatingTooltipText(this.text, {super.key, this.style});
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final ellipsized = Text(
+          text,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: _styleOf(context),
+        );
+        final width = constraints.maxWidth;
+        if (width <= 0 || width.isInfinite) return ellipsized;
+
+        final painter = TextPainter(
+          text: TextSpan(text: text, style: _styleOf(context)),
+          textDirection: TextDirection.ltr,
+          maxLines: 1,
+          textScaler: MediaQuery.textScalerOf(context),
+        )..layout(maxWidth: double.infinity);
+        if (painter.width <= width) return ellipsized;
+
+        // The status bar sits at the bottom of the window: open above.
+        // Keep the tooltip up long after the pointer drifts off (10s) so a
+        // long error can actually be read.
+        return Tooltip(
+          message: text,
+          preferBelow: false,
+          showDuration: const Duration(seconds: 10),
+          child: ellipsized,
+        );
+      },
+    );
+  }
+
+  TextStyle? _styleOf(BuildContext context) =>
+      style ?? Theme.of(context).textTheme.bodySmall;
 }
 
 const _successColor = Color(0xFF0E8420);

@@ -5,6 +5,7 @@
 //
 // The Rust auth backend is not initialized in widget tests (main() does
 // that); RustStoreService degrades gracefully to "not signed in".
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ubuntu_core_model_builder/main.dart';
@@ -66,5 +67,82 @@ void main() {
     await tester.pump(const Duration(seconds: 4));
     expect(find.text('All done'), findsNothing);
     StatusBarService.instance.clear();
+  });
+
+  testWidgets('truncated text gets a hover tooltip; short text does not',
+      (tester) async {
+    tester.view.physicalSize = const Size(1400, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    // A narrow host row, standing in for the footer's left slot.
+    await tester.pumpWidget(const MaterialApp(
+      home: Scaffold(
+        body: Align(
+          alignment: Alignment.centerLeft,
+          child: SizedBox(
+            width: 160,
+            child: TruncatingTooltipText(
+                'Could not load the store catalog: the store rejected the '
+                    'session because the macaroon expired.'),
+          ),
+        ),
+      ),
+    ));
+    await tester.pump();
+
+    const msg = 'Could not load the store catalog: the store rejected the '
+        'session because the macaroon expired.';
+
+    // It is ellipsized in the 160px slot, so a Tooltip is attached.
+    expect(find.text(msg), findsOneWidget);
+    expect(find.ancestor(of: find.text(msg), matching: find.byType(Tooltip)),
+        findsOneWidget);
+
+    // A short text at the same width is not truncated: no Tooltip.
+    await tester.pumpWidget(const MaterialApp(
+      home: Scaffold(
+        body: Align(
+          alignment: Alignment.centerLeft,
+          child: SizedBox(
+              width: 160, child: TruncatingTooltipText('Ready')),
+        ),
+      ),
+    ));
+    await tester.pump();
+    expect(find.text('Ready'), findsOneWidget);
+    expect(find.ancestor(of: find.text('Ready'),
+        matching: find.byType(Tooltip)), findsNothing);
+
+    // Back to the long text: hovering opens the overlay with the full text.
+    await tester.pumpWidget(const MaterialApp(
+      home: Scaffold(
+        body: Align(
+          alignment: Alignment.centerLeft,
+          child: SizedBox(width: 160, child: TruncatingTooltipText(msg)),
+        ),
+      ),
+    ));
+    await tester.pump();
+
+    final gesture =
+        await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await gesture.addPointer(location: Offset.zero);
+    await tester.pump();
+    await gesture.moveTo(tester.getCenter(find.text(msg)));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+    // The overlay renders the full message a second time.
+    expect(find.text(msg), findsNWidgets(2));
+
+    // ...and it dismisses once the pointer leaves (RawTooltip dismisses
+    // after its exit delay; pump in small steps so that timer runs).
+    await gesture.moveTo(const Offset(700, 400));
+    for (var i = 0; i < 5; i++) {
+      await tester.pump(const Duration(milliseconds: 60));
+    }
+    expect(find.text(msg), findsOneWidget);
+    await gesture.removePointer();
+    await tester.pump();
   });
 }

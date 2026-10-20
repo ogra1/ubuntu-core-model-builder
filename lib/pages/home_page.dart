@@ -394,10 +394,8 @@ class _HomePageState extends State<HomePage> {
             size: 18, color: Theme.of(context).colorScheme.error),
         const SizedBox(width: 8),
         Flexible(
-          child: Text(
+          child: TruncatingTooltipText(
             hint,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
                   color: Theme.of(context).colorScheme.error,
                 ),
