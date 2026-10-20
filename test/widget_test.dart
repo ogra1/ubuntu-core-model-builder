@@ -42,27 +42,29 @@ void main() {
     await tester.pumpWidget(const ModelBuilderApp());
     await tester.pump();
 
-    // An error stays in the status bar with a dismiss control.
+    // An error stays in the footer with a dismiss control.
     StatusBarService.instance.error('Something went wrong');
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('Something went wrong'), findsOneWidget);
     expect(find.byTooltip('Dismiss (Esc)'), findsOneWidget);
 
-    // A success message replaces it and no dismiss button is offered.
+    // Errors do NOT auto-clear: well past the info/success timeout they are
+    // still visible.
+    await tester.pump(const Duration(seconds: 6));
+    expect(find.text('Something went wrong'), findsOneWidget);
+    expect(find.byTooltip('Dismiss (Esc)'), findsOneWidget);
+
+    // A success message replaces it; no dismiss button is offered.
     StatusBarService.instance.success('All done');
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('All done'), findsOneWidget);
     expect(find.byTooltip('Dismiss (Esc)'), findsNothing);
 
-    // Dismissing empties the bar again (one pump covers the AnimatedSwitcher
-    // exit transition).
-    StatusBarService.instance.clear();
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 250));
+    // ...and it auto-clears once the 5s timeout elapses.
+    await tester.pump(const Duration(seconds: 2));
+    expect(find.text('All done'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 4));
     expect(find.text('All done'), findsNothing);
-
     StatusBarService.instance.clear();
   });
 }

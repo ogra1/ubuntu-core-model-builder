@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:yaru_icons/yaru_icons.dart';
 
@@ -25,16 +27,25 @@ class StatusMessage {
 /// Floating toasts are out of place on a desktop surface: they cover
 /// whatever the user is reading and vanish on a fixed timer, so real errors
 /// are often missed. Instead this service keeps the most recent message in
-/// a persistent status bar at the bottom of the window. A message stays
-/// visible — errors in their error color — until the user dismisses it (the
-/// close button or the Escape key) or a newer message replaces it.
+/// the app's footer bar.
+///
+/// Message lifetime:
+///  * **info / success** — auto-clear after [autoClearDuration] (long enough
+///    to read, short enough not to linger);
+///  * **error** — stays visible, in its error color, until the user
+///    dismisses it (close button or the Escape key), navigates to another
+///    wizard step, or a newer message replaces it.
 class StatusBarService extends ChangeNotifier {
   StatusBarService._();
 
   static final StatusBarService instance = StatusBarService._();
 
+  /// How long info/success messages stay visible before auto-clearing.
+  static const Duration autoClearDuration = Duration(seconds: 5);
+
   StatusMessage? _current;
   int _token = 0;
+  Timer? _autoClear;
 
   StatusMessage? get current => _current;
   bool get hasCurrent => _current != null;
@@ -43,12 +54,16 @@ class StatusBarService extends ChangeNotifier {
     String text, {
     StatusSeverity severity = StatusSeverity.info,
   }) {
+    _cancelAutoClear();
     _current = StatusMessage(
       text: text,
       severity: severity,
       token: ++_token,
     );
     notifyListeners();
+    if (severity != StatusSeverity.error) {
+      _autoClear = Timer(autoClearDuration, clear);
+    }
   }
 
   void error(String text) => show(text, severity: StatusSeverity.error);
@@ -57,9 +72,15 @@ class StatusBarService extends ChangeNotifier {
 
   /// Dismiss the current message, if any.
   void clear() {
+    _cancelAutoClear();
     if (_current == null) return;
     _current = null;
     notifyListeners();
+  }
+
+  void _cancelAutoClear() {
+    _autoClear?.cancel();
+    _autoClear = null;
   }
 }
 

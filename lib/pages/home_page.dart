@@ -30,6 +30,8 @@ class _HomePageState extends State<HomePage> {
     final pending = _state.pendingNavigation;
     if (pending != null) {
       _state.pendingNavigation = null;
+      // Step-scoped messages (errors most of all) go stale on navigation.
+      StatusBarService.instance.clear();
       setState(() => _current = pending);
       return;
     }
@@ -58,6 +60,8 @@ class _HomePageState extends State<HomePage> {
 
   void _goTo(WizardStep step) {
     if (_state.isStepEnabled(step)) {
+      // Step-scoped messages (errors most of all) go stale on navigation.
+      StatusBarService.instance.clear();
       setState(() => _current = step);
     } else {
       _showBlockedStatus(step);
@@ -90,6 +94,7 @@ class _HomePageState extends State<HomePage> {
 
   void _back() {
     if (_canGoBack) {
+      StatusBarService.instance.clear();
       setState(() => _current = WizardStep.values[_current.index - 1]);
     }
   }
