@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import '../services/status_bar_service.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:yaru/yaru.dart';
@@ -201,14 +202,8 @@ class _MetadataPageState extends State<MetadataPage> {
           environment: HostEnv.sanitized, includeParentEnvironment: false);
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            behavior: SnackBarBehavior.floating,
-            content: Text('Browse example models at: '
-                'https://github.com/canonical/models'),
-            duration: Duration(seconds: 8),
-          ),
-        );
+        context.postStatus('Browse example models at: '
+            'https://github.com/canonical/models');
       }
     }
   }
@@ -275,12 +270,7 @@ class _MetadataPageState extends State<MetadataPage> {
           accountId: account?.accountId,
         );
       } else if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            behavior: SnackBarBehavior.floating,
-            content: Text('Model imported.'),
-          ),
-        );
+        context.postSuccess('Model imported.');
       }
     } on ModelImportException catch (e) {
       if (!context.mounted) return;
@@ -351,12 +341,7 @@ class _MetadataPageState extends State<MetadataPage> {
       widget.onChanged();
       setState(() {});
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            behavior: SnackBarBehavior.floating,
-            content: Text('Brand-id replaced with $accountId.'),
-          ),
-        );
+        context.postSuccess('Brand-id replaced with $accountId.');
       }
     }
   }
@@ -556,13 +541,7 @@ class _MetadataPageState extends State<MetadataPage> {
 
   void _error(BuildContext context, String msg) {
     if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: Theme.of(context).colorScheme.errorContainer,
-        content: Text(msg),
-      ),
-    );
+    context.postError(msg);
   }
 
   // ---------------------------------------------------------------------------

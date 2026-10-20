@@ -8,6 +8,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ubuntu_core_model_builder/main.dart';
+import 'package:ubuntu_core_model_builder/services/status_bar_service.dart';
 
 void main() {
   testWidgets('wizard shell builds and shows the Account step',
@@ -25,14 +26,43 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
 
-    // App bar + the first wizard step's headline.
-    // The app bar shows the app name. Scope to the AppBar: the sidebar
-    // header (home_page.dart) also renders a "Model Builder" brand label, so
-    // an unscoped find.text would match two and fail findsOneWidget.
-    expect(find.descendant(of: find.byType(AppBar),
-            matching: find.text('Model Builder')),
-        findsOneWidget);
+    // The app name lives in the sidebar brand header (the top app bar was
+    // removed as redundant); the first wizard step's headline is visible.
+    expect(find.text('Model Builder'), findsOneWidget);
     expect(find.text('Getting Started'), findsOneWidget);
     expect(find.text('Sign in'), findsOneWidget);
+  });
+
+  testWidgets('status bar shows posted messages and clears on dismiss',
+      (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1400, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(const ModelBuilderApp());
+    await tester.pump();
+
+    // An error stays in the status bar with a dismiss control.
+    StatusBarService.instance.error('Something went wrong');
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('Something went wrong'), findsOneWidget);
+    expect(find.byTooltip('Dismiss (Esc)'), findsOneWidget);
+
+    // A success message replaces it and no dismiss button is offered.
+    StatusBarService.instance.success('All done');
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('All done'), findsOneWidget);
+    expect(find.byTooltip('Dismiss (Esc)'), findsNothing);
+
+    // Dismissing empties the bar again (one pump covers the AnimatedSwitcher
+    // exit transition).
+    StatusBarService.instance.clear();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(find.text('All done'), findsNothing);
+
+    StatusBarService.instance.clear();
   });
 }

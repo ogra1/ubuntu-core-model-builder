@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../services/status_bar_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:yaru/yaru.dart';
 
@@ -204,13 +205,7 @@ class _KeysPageState extends State<KeysPage> {
 
   void _showError(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: Theme.of(context).colorScheme.errorContainer,
-      ),
-    );
+    context.postError(message);
   }
 
   @override

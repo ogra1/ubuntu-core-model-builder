@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import '../services/status_bar_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:yaru/yaru.dart';
 import '../models/model_assertion.dart';
@@ -227,13 +228,7 @@ class _SnapsPageState extends State<SnapsPage> {
 
   void _errorSnack(String msg) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: Theme.of(context).colorScheme.errorContainer,
-        content: Text(msg),
-      ),
-    );
+    context.postError(msg);
   }
 
   Future<void> _seedRequiredSnaps() async {
@@ -363,30 +358,17 @@ class _SnapsPageState extends State<SnapsPage> {
             autoAdded: true,
           );
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                behavior: SnackBarBehavior.floating,
-                duration: const Duration(seconds: 6),
-                content: Text(
-                  'Added base snap "$resolvedAppBase" automatically because '
-                  '"${entry.name}" is built on it. It is placed before the '
-                  'app so snapd processes it first during image build.',
-                ),
-              ),
+            context.postStatus(
+              'Added base snap "$resolvedAppBase" automatically because '
+              '"${entry.name}" is built on it. It is placed before the '
+              'app so snapd processes it first during image build.',
             );
           }
         } catch (e) {
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                behavior: SnackBarBehavior.floating,
-                backgroundColor:
-                    Theme.of(context).colorScheme.errorContainer,
-                content: Text(
-                  'Could not auto-add base "$resolvedAppBase" needed by '
-                  '"${entry.name}": $e',
-                ),
-              ),
+            context.postError(
+              'Could not auto-add base "$resolvedAppBase" needed by '
+              '"${entry.name}": $e',
             );
           }
         } finally {
@@ -449,26 +431,16 @@ class _SnapsPageState extends State<SnapsPage> {
         .where((s) => s.type == SnapType.app && s.appBase == baseName)
         .map((s) => s.name)
         .toList();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        behavior: SnackBarBehavior.floating,
-        content: Text(
-          'Cannot remove base "$baseName": it is required by '
-          '${dependents.join(", ")}. Remove those app(s) first.',
-        ),
-      ),
+    context.postError(
+      'Cannot remove base "$baseName": it is required by '
+      '${dependents.join(", ")}. Remove those app(s) first.',
     );
   }
 
   void _showBaseAutoRemovedMessage(String baseName, String appName) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        behavior: SnackBarBehavior.floating,
-        content: Text(
-          'Also removed auto-added base "$baseName" — no remaining snap '
-          'depends on it after removing "$appName".',
-        ),
-      ),
+    context.postStatus(
+      'Also removed auto-added base "$baseName" — no remaining snap '
+      'depends on it after removing "$appName".',
     );
   }
 
@@ -701,12 +673,7 @@ class _SnapsPageState extends State<SnapsPage> {
     } catch (e) {
       if (mounted) {
         setState(() => _busy = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            behavior: SnackBarBehavior.floating,
-            content: Text('Could not load channels for "${gadget.name}": $e'),
-          ),
-        );
+        context.postError('Could not load channels for "${gadget.name}": $e');
       }
       return;
     }

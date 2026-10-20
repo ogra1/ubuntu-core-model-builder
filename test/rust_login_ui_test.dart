@@ -37,6 +37,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:ubuntu_core_model_builder/services/status_bar_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:ubuntu_core_model_builder/models/wizard_step.dart';
@@ -92,13 +93,26 @@ void main() {
   /// HomePage subscribes in the real app (`_state.addListener`). Mirror
   /// that with a ListenableBuilder so the page rebuilds when the login
   /// settles the account.
+  /// The page plus a footer row hosting the app's status content, mirroring
+  /// how HomePage embeds it (the status bar now lives in the footer bar, not
+  /// in its own row).
   Widget pageFor(WizardState s) => MaterialApp(
         debugShowCheckedModeBanner: false,
         home: Scaffold(
-          body: ListenableBuilder(
-            listenable: s,
-            builder: (context, _) =>
-                AccountPage(state: s, onRetry: () async {}),
+          body: Column(
+            children: [
+              Expanded(
+                child: ListenableBuilder(
+                  listenable: s,
+                  builder: (context, _) =>
+                      AccountPage(state: s, onRetry: () async {}),
+                ),
+              ),
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                child: Row(children: [Expanded(child: _FooterStatus())]),
+              ),
+            ],
           ),
         ),
       );
@@ -140,13 +154,12 @@ void main() {
     }
   }
 
-  /// Pumps fake time until a snackbar (if any) has fully dismissed, so the
-  /// page is in a clean state at test end.
+  /// Resets the app-wide status bar so the page is in a clean state at
+  /// test end (replaces the old "drain snackbars" helper — the status bar
+  /// never times out on its own).
   Future<void> drainSnackbars(WidgetTester t) async {
-    for (var i = 0; i < 60; i++) {
-      if (find.byType(SnackBar).evaluate().isEmpty) return;
-      await t.pump(const Duration(milliseconds: 500));
-    }
+    StatusBarService.instance.clear();
+    await t.pump(const Duration(milliseconds: 500));
   }
 
   /// Opens the credentials dialog from the page (asserts it appears).
@@ -356,4 +369,21 @@ void main() {
       await drainSnackbars(t);
     });
   });
+}
+
+/// Mirrors HomePage's footer left slot: shows the active status message.
+class _FooterStatus extends StatelessWidget {
+  const _FooterStatus();
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: StatusBarService.instance,
+      builder: (context, _) => StatusBarService.instance.hasCurrent
+          // Non-const: an identical const instance would short-circuit the
+          // element update and freeze the content on the first message.
+          ? StatusBarContent() // ignore: prefer_const_constructors
+          : const SizedBox.shrink(),
+    );
+  }
 }

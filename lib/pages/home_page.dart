@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../theme/status_colors.dart';
 import '../models/wizard_step.dart';
 import '../services/rust_store_service.dart';
+import '../services/status_bar_service.dart';
 import '../services/tool_locator.dart';
 import 'account_page.dart';
 import 'metadata_page.dart';
@@ -22,20 +24,6 @@ class _HomePageState extends State<HomePage> {
   final WizardState _state = WizardState();
   WizardStep _current = WizardStep.account;
   bool _extendedRail = true;
-
-  @override
-  void initState() {
-    super.initState();
-    _state.addListener(_onStateChanged);
-    _bootstrap();
-  }
-
-  @override
-  void dispose() {
-    _state.removeListener(_onStateChanged);
-    _state.dispose();
-    super.dispose();
-  }
 
   void _onStateChanged() {
     if (!mounted) return;
@@ -72,23 +60,18 @@ class _HomePageState extends State<HomePage> {
     if (_state.isStepEnabled(step)) {
       setState(() => _current = step);
     } else {
-      _showBlockedSnackBar(step);
+      _showBlockedStatus(step);
     }
   }
 
-  void _showBlockedSnackBar(WizardStep step) {
+  void _showBlockedStatus(WizardStep step) {
     for (final s in WizardStep.values) {
       if (s.index >= step.index) break;
       if (!_state.isStepComplete(s)) {
         final errors = _state.validationErrors(s);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Complete "${s.label}" first: '
-              '${errors.isNotEmpty ? errors.first : ""}',
-            ),
-            behavior: SnackBarBehavior.floating,
-          ),
+        StatusBarService.instance.error(
+          'Complete "${s.label}" first: '
+          '${errors.isNotEmpty ? errors.first : ""}',
         );
         return;
       }
@@ -128,13 +111,41 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  /// Global key listener so Escape can dismiss the status bar message even
+  /// when no widget has keyboard focus.
+  KeyEventCallback? _escapeHandler;
+
+  bool _handleGlobalKey(KeyEvent event) {
+    if (event is KeyUpEvent &&
+        event.logicalKey == LogicalKeyboardKey.escape) {
+      StatusBarService.instance.clear();
+    }
+    // Let the event propagate to focused widgets (e.g. dialogs, fields).
+    return false;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _escapeHandler = _handleGlobalKey;
+    HardwareKeyboard.instance.addHandler(_escapeHandler!);
+    _state.addListener(_onStateChanged);
+    _bootstrap();
+  }
+
+  @override
+  void dispose() {
+    if (_escapeHandler != null) {
+      HardwareKeyboard.instance.removeHandler(_escapeHandler!);
+    }
+    _state.removeListener(_onStateChanged);
+    _state.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Model Builder'),
-		centerTitle: false,
-      ),
       body: Column(
         children: [
           Expanded(
@@ -321,32 +332,25 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildFooterBar() {
-    final errors = _state.validationErrors(_current);
+    final hint =
+        _current != WizardStep.review ? _state.validationErrors(_current).firstOrNull : null;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
       child: Row(
         children: [
-          if (errors.isNotEmpty && _current != WizardStep.review)
-            Expanded(
-              child: Row(
-                children: [
-                  Icon(Icons.info_outline,
-                      size: 18, color: Theme.of(context).colorScheme.error),
-                  const SizedBox(width: 8),
-                  Flexible(
-                    child: Text(
-                      errors.first,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: Theme.of(context).colorScheme.error,
-                          ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ],
-              ),
-            )
-          else
-            const Spacer(),
+          Expanded(
+            child: ListenableBuilder(
+              listenable: StatusBarService.instance,
+              // Note: StatusBarContent must be a fresh (non-const) widget
+              // on every builder run — an identical const instance would
+              // short-circuit the element update and freeze the content on
+              // the first message.
+              builder: (context, _) =>
+                  StatusBarService.instance.hasCurrent
+                      ? _footerStatus()
+                      : _footerHint(hint),
+            ),
+          ),
           const SizedBox(width: 16),
           OutlinedButton(
             onPressed: _canGoBack ? _back : null,
@@ -360,6 +364,41 @@ class _HomePageState extends State<HomePage> {
             ),
         ],
       ),
+    );
+  }
+
+  /// The active status message, rendered in the footer's left slot.
+  ///
+  /// The widget must be a fresh non-const instance each build so the newest
+  /// message actually renders — an identical const instance short-circuits
+  /// the element update and freezes the content on the first message.
+  Widget _footerStatus() {
+    // ignore: prefer_const_constructors (deliberate, see above)
+    return StatusBarContent();
+  }
+
+  /// Ambient left-hand content of the footer while no status message is
+  /// active: the current step's first validation error, as before.
+  Widget _footerHint(String? hint) {
+    if (hint == null || hint.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return Row(
+      children: [
+        Icon(Icons.info_outline,
+            size: 18, color: Theme.of(context).colorScheme.error),
+        const SizedBox(width: 8),
+        Flexible(
+          child: Text(
+            hint,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Theme.of(context).colorScheme.error,
+                ),
+          ),
+        ),
+      ],
     );
   }
 }

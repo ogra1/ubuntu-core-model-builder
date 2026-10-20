@@ -78,9 +78,9 @@ void main() {
       (tester) async {
     await pumpApp(tester);
 
-    // App bar + step headline. 'Model Builder' appears twice: the app bar
-    // title and the sidebar brand header (both are intentional).
-    expect(find.text('Model Builder'), findsNWidgets(2));
+    // Step headline. The app bar was removed as redundant, so 'Model
+    // Builder' now appears exactly once: the sidebar brand header.
+    expect(find.text('Model Builder'), findsOneWidget);
     expect(find.text('Getting Started'), findsOneWidget);
 
     // Required tools section. snapd is required; pinentry is recommended.

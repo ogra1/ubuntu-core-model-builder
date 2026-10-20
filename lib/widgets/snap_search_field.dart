@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import '../services/status_bar_service.dart';
 import '../models/store_snap.dart';
 import '../models/snap_entry.dart';
 import '../services/store_api_service.dart';
@@ -198,14 +199,9 @@ class _SnapSearchFieldState extends State<SnapSearchField> {
       });
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            behavior: SnackBarBehavior.floating,
-            content: Text(
-              'No snap named "$name" found for '
-              '"${widget.architecture}". Check the exact name.',
-            ),
-          ),
+        context.postError(
+          'No snap named "$name" found for '
+          '"${widget.architecture}". Check the exact name.',
         );
       }
     } finally {

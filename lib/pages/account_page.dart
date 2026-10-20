@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../services/status_bar_service.dart';
 import 'package:yaru/yaru.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -31,12 +32,7 @@ class AccountPage extends StatelessWidget {
       final acct = await store.getCurrentAccount();
       state.setAccount(acct);
       if (acct == null && context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Sign-in was cancelled or failed. Press "Sign in" to retry.'),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
+        context.postError('Sign-in was cancelled or failed. Press "Sign in" to retry.');
       }
     } finally {
       state.busy = false;
@@ -71,29 +67,13 @@ class AccountPage extends StatelessWidget {
       final acct = await RustStoreService().importCredentials(creds);
       state.setAccount(acct);
       if (acct == null && context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Credentials imported but no account detected.'),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
+        context.postError('Credentials imported but no account detected.');
       } else if (acct != null && context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Signed in as ${acct.email}.'),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
+        context.postSuccess('Signed in as ${acct.email}.');
       }
     } on CredentialImportException catch (e) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Import failed: ${e.message}'),
-            behavior: SnackBarBehavior.floating,
-            backgroundColor: Theme.of(context).colorScheme.errorContainer,
-          ),
-        );
+        context.postError('Import failed: ${e.message}');
       }
     } finally {
       state.busy = false;

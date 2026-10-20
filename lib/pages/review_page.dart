@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../services/status_bar_service.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:yaru/yaru.dart';
@@ -159,27 +160,16 @@ class _ReviewPageState extends State<ReviewPage> {
       } catch (e) {
         jsonPath = null;
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              behavior: SnackBarBehavior.floating,
-              backgroundColor: Theme.of(context).colorScheme.errorContainer,
-              content: Text('Saved .model but failed to save JSON: $e'),
-            ),
-          );
+          context.postError('Saved .model but failed to save JSON: $e');
         }
       }
     }
 
     if (mounted) {
       final msg = jsonPath != null
-          ? 'Saved ${location.path}\nand $jsonPath'
+          ? 'Saved ${location.path} and $jsonPath'
           : 'Saved ${location.path}';
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(msg),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+      context.postSuccess(msg);
     }
   }
 
@@ -233,13 +223,7 @@ class _ReviewPageState extends State<ReviewPage> {
 
   void _showError(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: Theme.of(context).colorScheme.errorContainer,
-      ),
-    );
+    context.postError(message);
   }
 
   void _showErrors(List<String> errors) {
