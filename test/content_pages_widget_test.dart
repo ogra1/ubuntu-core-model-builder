@@ -89,6 +89,43 @@ void main() {
           tester.widget<TextField>(nameField).controller!;
       expect(controller.text, 'my-device');
     });
+
+    testWidgets('System: architecture and base share one row; no i386',
+        (tester) async {
+      final st = stateWith();
+      await pumpPage(
+          tester, MetadataPage(state: st, onChanged: () {}));
+
+      // The two short, fixed-vocabulary pulldowns share a single row
+      // (architecture first, base second) instead of stacking full-width.
+      final arch =
+          find.byType(DropdownButtonFormField<ModelArchitecture>);
+      final base = find.byType(DropdownButtonFormField<String>).first;
+      expect(arch, findsOneWidget);
+      expect(base, findsOneWidget);
+
+      final archRect = tester.getRect(arch);
+      final baseRect = tester.getRect(base);
+      expect(baseRect.top, archRect.top,
+          reason: 'base must sit on the same row as architecture');
+      expect(baseRect.left, greaterThan(archRect.right),
+          reason: 'architecture is the left field, base the right one');
+
+      // Ubuntu Core does not support i386: it is not an option. Open the
+      // architecture menu and check the offered values. (The *selected*
+      // value is also rendered in the button, so the unselected options —
+      // arm64/armhf/riscv64 — are each exactly one; amd64 is not asserted
+      // here because it would match the button too.)
+      await tester.tap(arch);
+      await tester.pumpAndSettle();
+      expect(find.text('i386'), findsNothing);
+      expect(find.text('arm64'), findsOneWidget);
+      expect(find.text('armhf'), findsOneWidget);
+      expect(find.text('riscv64'), findsOneWidget);
+      // Close the menu again.
+      await tester.tapAt(const Offset(5, 5));
+      await tester.pumpAndSettle();
+    });
   });
 
   group('ExtrasPage', () {

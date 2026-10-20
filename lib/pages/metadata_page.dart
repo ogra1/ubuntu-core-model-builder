@@ -612,29 +612,41 @@ class _MetadataPageState extends State<MetadataPage> {
             padding: const EdgeInsets.all(16),
             child: Column(
               children: [
-                DropdownButtonFormField<ModelArchitecture>(
-                  initialValue: model.architecture,
-                  decoration: const InputDecoration(labelText: 'Architecture'),
-                  items: ModelArchitecture.values
-                      .map((a) =>
-                          DropdownMenuItem(value: a, child: Text(a.name)))
-                      .toList(),
-                  onChanged: (v) {
-                    if (v != null) model.architecture = v;
-                    widget.onChanged();
-                  },
-                ),
-                const SizedBox(height: 16),
-                DropdownButtonFormField<String>(
-                  initialValue: const ['core22', 'core24', 'core26']
-                          .contains(model.base)
-                      ? model.base
-                      : null,
-                  decoration: const InputDecoration(labelText: 'Base'),
-                  items: const ['core22', 'core24', 'core26']
-                      .map((b) => DropdownMenuItem(value: b, child: Text(b)))
-                      .toList(),
-                  onChanged: (v) => _onBaseChanged(v),
+                // Architecture and base are short, fixed-vocabulary values
+                // (<= 8 chars): one row instead of two full-width pulldowns.
+                Row(
+                  children: [
+                    Expanded(
+                      child: DropdownButtonFormField<ModelArchitecture>(
+                        initialValue: model.architecture,
+                        decoration:
+                            const InputDecoration(labelText: 'Architecture'),
+                        items: ModelArchitecture.values
+                            .map((a) =>
+                                DropdownMenuItem(value: a, child: Text(a.name)))
+                            .toList(),
+                        onChanged: (v) {
+                          if (v != null) model.architecture = v;
+                          widget.onChanged();
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: DropdownButtonFormField<String>(
+                        initialValue: const ['core22', 'core24', 'core26']
+                                .contains(model.base)
+                            ? model.base
+                            : null,
+                        decoration: const InputDecoration(labelText: 'Base'),
+                        items: const ['core22', 'core24', 'core26']
+                            .map((b) =>
+                                DropdownMenuItem(value: b, child: Text(b)))
+                            .toList(),
+                        onChanged: (v) => _onBaseChanged(v),
+                      ),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 16),
                 _buildStoreField(context),

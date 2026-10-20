@@ -2,7 +2,9 @@ import 'snap_entry.dart';
 
 enum ModelGrade { dangerous, signed, secured }
 
-enum ModelArchitecture { amd64, arm64, armhf, i386, riscv64 }
+/// Architectures supported for Ubuntu Core images. (i386 was never
+/// offered: Ubuntu Core does not support it.)
+enum ModelArchitecture { amd64, arm64, armhf, riscv64 }
 
 /// Controls who may sign system-user assertions the device accepts.
 /// brandOnly => omit the field (default: only the brand can sign).
