@@ -681,11 +681,11 @@ packages:
     dependency: "direct main"
     description:
       path: "."
-      ref: HEAD
-      resolved-ref: b9230a873b0ad5ceac0600ec5d6fc95a0fcb9e24
+      ref: "v0.1.1"
+      resolved-ref: "8d14d298692fad61aca235dd41c23547808f47df"
       url: "https://github.com/ogra1/snapstore-auth.git"
     source: git
-    version: "0.1.0"
+    version: "0.1.1"
   source_span:
     dependency: transitive
     description:

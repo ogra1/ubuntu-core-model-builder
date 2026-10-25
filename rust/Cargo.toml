@@ -1,6 +1,6 @@
 [package]
 name = "snapstore-auth"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Interactive OAuth2 + 2FA (Ubuntu One SSO) login for the Snap Store with macaroon issuance. FFI-ready Rust backend for Flutter apps (flutter_rust_bridge / UniFFI)."
 license = "MIT"
