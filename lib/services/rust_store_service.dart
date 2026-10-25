@@ -66,6 +66,13 @@ class RustStoreService {
       _secure.write(key: secureStorageKey, value: json);
   static Future<void> _deleteCreds() => _secure.delete(key: secureStorageKey);
 
+  /// Set to a human-readable message when the keyring write at the end of a
+  /// login flow fails (locked keyring, daemon absent, etc.), or when the
+  /// read-back after a write does not match. The UI layer can poll this and
+  /// show a non-fatal banner. Cleared on the next successful persist or on
+  /// [logout].
+  static String? storageFailure;
+
   /// ACLs requested for the standard in-app login — the set `snapcraft login`
   /// requests from the store's `/dev/api/acl/` endpoint, **plus**
   /// `store_admin`.
@@ -119,8 +126,13 @@ class RustStoreService {
       // No network needed: the Rust side validates the macaroon pair
       // locally (parse + bind) before flipping the machine to `succeeded`.
       await session.restore(saved);
-    } catch (_) {
+    } catch (err) {
       // Best-effort: an unreadable/invalid pair just means "signed out".
+      // Record the failure so the UI can show a hint (locked keyring,
+      // missing daemon) without blocking the app from starting.
+      storageFailure =
+          'Could not restore saved credentials: $err. '
+          'You may need to unlock your keyring and relaunch.';
     }
   }
 
@@ -210,6 +222,7 @@ class RustStoreService {
     }
     try {
       await _deleteCreds();
+      storageFailure = null;
     } catch (_) {}
   }
 
@@ -294,7 +307,23 @@ class RustStoreService {
         if (e is SucceededEvent) {
           try {
             await _writeCreds(e.credentialsJson);
-          } catch (_) {}
+            // Verify the write actually landed (a locked keyring may
+            // accept the call but the daemon fails to persist; the
+            // read-back catches this).
+            final back = await _readCreds();
+            if (back == e.credentialsJson) {
+              storageFailure = null;
+            } else {
+              storageFailure =
+                  'Credentials could not be saved to your keyring '
+                  '(it may be locked or unavailable). You will need to '
+                  'sign in again next time the app opens.';
+            }
+          } catch (err) {
+            storageFailure =
+                'Could not store credentials securely: $err. '
+                'Unlock your keyring and sign in again.';
+          }
           return;
         }
       }

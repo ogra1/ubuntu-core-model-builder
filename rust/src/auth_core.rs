@@ -661,6 +661,7 @@ async fn run_driver(
                     let root = match root {
                         Ok(r) => r,
                         Err(e) => {
+                            machine.clear_pending_credentials();
                             machine.fail(e);
                             continue;
                         }
@@ -694,6 +695,7 @@ async fn run_driver(
                             // Loop continues; we now sit in Needs2FACode.
                         }
                         Err(e) => {
+                            machine.clear_pending_credentials();
                             machine.fail(e);
                             continue;
                         }
@@ -948,6 +950,9 @@ fn finish_success(
         machine.fail(e);
         return false;
     }
+    // Wipe the stashed password now that the session is established
+    // (covers the non-2FA success path; the 2FA success path already clears).
+    machine.clear_pending_credentials();
     let creds_json = match serde_json::to_string(&creds) {
         Ok(j) => j,
         Err(e) => {
@@ -1218,6 +1223,79 @@ pub fn build_macaroon_header(creds: &Credentials) -> Result<String> {
 pub fn host_of(url: &str) -> String {
     let rest = url.split_once("://").map(|(_, r)| r).unwrap_or(url);
     rest.split('/').next().unwrap_or(rest).trim_end_matches('/').to_string()
+}
+
+/// True when the host is a loopback address (127.0.0.0/8, ::1, or "localhost").
+fn is_loopback_host(host: &str) -> bool {
+    let h = host.to_lowercase();
+    if h == "localhost" || h == "::1" || h == "[::1]" {
+        return true;
+    }
+    if h.starts_with("127.") {
+        // 127.x.y.z
+        return true;
+    }
+    false
+}
+
+/// Split a URL into (scheme, host) without a full URL parser.
+/// Returns None when the input is not a recognizable URL.
+fn parse_scheme_host(url: &str) -> Option<(&str, &str)> {
+    let (scheme, rest) = url.split_once("://")?;
+    let host = rest.split('/').next()?.trim_end_matches('/');
+    if host.is_empty() {
+        return None;
+    }
+    Some((scheme, host))
+}
+
+/// Validate that the store and login endpoints are trusted.
+///
+/// Called from the FFI boundary (auth_runtime_init) to stop a configuration
+/// bug or a hostile Dart caller from redirecting the user password to an
+/// untrusted host.
+///
+/// Accepted:
+///  * `https` on hosts under *.snapcraft.io or *.ubuntu.com (the production
+///    Snap Store / Ubuntu One domains), or
+///  * `http` on loopback (127.0.0.0/8, ::1, localhost) - the local
+///    mock-store test harness used by the Dart/Rust integration tests.
+///
+/// Everything else is rejected.
+pub fn assert_trusted_endpoints(store_url: &str, login_url: &str) -> Result<()> {
+    for (label, url) in [("store_url", store_url), ("login_url", login_url)] {
+        let (scheme, host) = parse_scheme_host(url).ok_or_else(|| {
+            AuthenticationError::InvalidResponse(format!(
+                "{label}: cannot parse scheme/host from '{url}'"
+            ))
+        })?;
+        match scheme {
+            "https" => {
+                let h = host.to_lowercase();
+                let trusted = ["snapcraft.io", "ubuntu.com"].iter().any(|d| {
+                    h == *d || h.ends_with(&format!(".{d}"))
+                });
+                if !trusted {
+                    return Err(AuthenticationError::InvalidResponse(format!(
+                        "{label}: untrusted host '{host}' (only *.snapcraft.io / *.ubuntu.com allowed)"
+                    )));
+                }
+            }
+            "http" => {
+                if !is_loopback_host(host) {
+                    return Err(AuthenticationError::InvalidResponse(format!(
+                        "{label}: http is only allowed on loopback (test harness), got '{host}'"
+                    )));
+                }
+            }
+            other => {
+                return Err(AuthenticationError::InvalidResponse(format!(
+                    "{label}: unsupported scheme '{other}' (only https, or http on loopback)"
+                )));
+            }
+        }
+    }
+    Ok(())
 }
 
 

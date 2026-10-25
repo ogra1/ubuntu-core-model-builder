@@ -46,6 +46,7 @@ use crate::error::{AuthenticationError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, PoisonError};
+use zeroize::Zeroizing;
 
 /// Input events pushed *down* from the UI to the state machine.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -183,7 +184,7 @@ pub struct AuthStateMachine {
     buffer: EventBuffer,
     /// Email/password carried between `NeedsCredentials` and `Needs2FACode`
     /// (in memory only; cleared on success/cancel).
-    pending: std::sync::Mutex<Option<(String, String)>>,
+    pending: std::sync::Mutex<Option<(String, Zeroizing<String>)>>,
 }
 
 impl AuthStateMachine {
@@ -256,18 +257,26 @@ impl AuthStateMachine {
 
     /// Stash credentials for the 2FA retry (driver only).
     pub fn stash_credentials(&self, email: String, password: String) {
+        // Zeroizing wipes the password from memory when it is replaced or
+        // dropped, limiting the window a co-located process (or a core dump)
+        // can recover it from the heap.
         *self
             .pending
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some((email, password));
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            Some((email, Zeroizing::new(password)));
     }
 
     /// Read stashed credentials (driver only).
     pub fn take_pending_credentials(&self) -> Option<(String, String)> {
+        // Clone the values out. The stored password is a Zeroizing wrapper;
+        // we only copy the bytes here, and the stored original is wiped when
+        // it is next replaced or dropped.
         self.pending
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone()
+            .as_ref()
+            .map(|(e, p)| (e.clone(), (**p).to_string()))
     }
 
     /// Clear stashed credentials (driver only).
