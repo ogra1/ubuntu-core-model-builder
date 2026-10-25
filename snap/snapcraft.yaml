@@ -127,7 +127,7 @@ parts:
     plugin: nil
     source: https://github.com/ogra1/snapstore-auth.git
     source-type: git
-    source-commit: 27d574bfed9c847e02c12fabf32eddc8f497209d
+    source-commit: 8d14d298692fad61aca235dd41c23547808f47df
     build-packages:
       - build-essential   # cc for ring's C shim
       - curl
