@@ -120,6 +120,7 @@ class GpgKeyGenerator {
       throw const KeyGenerationException(
           'Could not determine the GPG home directory (~/.snap/gnupg).');
     }
+    await ensureHomedir(homedir);
     await _runGenKey(homedir, name: name, timeout: timeout);
 
     final listing = await _listSecretKeys(homedir);
@@ -134,6 +135,36 @@ class GpgKeyGenerator {
       throw KeyGenerationException(specError);
     }
     return CreatedKey(name: name, fingerprint: info.fingerprint);
+  }
+
+  /// Creates [homedir] (and any missing parents, e.g. `~/.snap`) if it does
+  /// not exist yet, with the permissions gpg requires:
+  ///
+  /// * the gnupg homedir leaf — 0700, or gpg emits
+  ///   `WARNING: unsafe permissions on homedir` and treats the keyring as
+  ///   compromised;
+  /// * a `~/.snap` parent we had to create — 0711 (traversable, not
+  ///   listable), the same permissions snapd uses for the directory.
+  ///
+  /// gpg does **not** create its homedir. Without this, the first key
+  /// generation on a machine where nothing has written to `~/.snap` yet
+  /// (fresh installs, CI/builder containers) fails with
+  /// `keyblock resource '.../pubring.kbx': No such file or directory` and
+  /// `No agent running` instead of showing the passphrase prompt.
+  static Future<void> ensureHomedir(String homedir) async {
+    final dir = Directory(homedir);
+    if (await dir.exists()) return;
+    await dir.parent.create(recursive: true);
+    await dir.create();
+    try {
+      await Process.run('chmod', ['700', dir.path]);
+      if (dir.parent.path.split(Platform.pathSeparator).last == '.snap') {
+        await Process.run('chmod', ['711', dir.parent.path]);
+      }
+    } on ProcessException {
+      // chmod is POSIX-only; elsewhere the directories keep the default
+      // umask permissions (gpg will warn but still work in the 0755 case).
+    }
   }
 
   // -- internals -------------------------------------------------------------

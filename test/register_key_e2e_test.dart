@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ubuntu_core_model_builder/services/ffi/snapstore_auth_client.dart';
+import 'package:ubuntu_core_model_builder/services/gpg_key_generator.dart';
 import 'package:ubuntu_core_model_builder/services/rust_key_service.dart';
 import 'package:ubuntu_core_model_builder/services/rust_store_service.dart';
 import 'support/mock_store_path.dart';
@@ -55,6 +56,10 @@ void main() {
   Future<void> generateKey() async {
     final home = Platform.environment['HOME'];
     if (home == null) throw StateError('HOME not set');
+    // The app's GpgKeyGenerator.ensureHomedir does this for the UI path;
+    // gpg itself will not create the keyring, so the test needs it too
+    // (fresh CI homes otherwise fail with "No agent running").
+    await GpgKeyGenerator.ensureHomedir('$home/.snap/gnupg');
     keyName =
         'mbtest-reg-${DateTime.now().millisecondsSinceEpoch}';
     final params = '%no-protection\n'
