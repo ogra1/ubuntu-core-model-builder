@@ -202,7 +202,10 @@ parts:
       flutter pub get
       # required for the test suite
       export SNAPSTORE_AUTH_LIB=$CRAFT_STAGE/bin/libsnapstore_auth.so
-      # run the whole test suite
+      # run flutter tests (and turn off proxy, else they fail)
+      set +u
+      export NO_PROXY="127.0.0.1,localhost,${NO_PROXY}"
+      export no_proxy="127.0.0.1,localhost,${no_proxy}"
       flutter test
 
       # build the app
