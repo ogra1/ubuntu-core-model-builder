@@ -127,7 +127,7 @@ parts:
     plugin: nil
     source: https://github.com/ogra1/snapstore-auth.git
     source-type: git
-    source-commit: 8d14d298692fad61aca235dd41c23547808f47df
+    source-commit: 94af884f3bc265d50802897acf0cd1f3bdea13e8
     build-packages:
       - build-essential   # cc for ring's C shim
       - curl
@@ -171,7 +171,7 @@ parts:
       nm -D "$LIB" > "$CRAFT_PART_BUILD/exports.txt"
       for sym in auth_account_info auth_authorization_header auth_cancel \
                  auth_drain_events auth_free_string auth_import_exported_login \
-                 auth_logout auth_pending_events auth_register_key \
+                 auth_logout auth_pending_events auth_register_key auth_request \
                  auth_restore_credentials auth_runtime_get auth_runtime_init \
                  auth_start_login auth_state auth_store_snaps \
                  auth_submit_2fa_code auth_submit_credentials auth_whoami; do
