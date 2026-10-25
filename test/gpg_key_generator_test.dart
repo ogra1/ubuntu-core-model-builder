@@ -169,8 +169,14 @@ void main() {
     });
 
     test('gpg failure: pinentry error surfaces the friendly hint', () async {
+      // Drain stdin before dying: the real gpg reads the params blob even
+      // when generation later fails. Without this the stub can exit before
+      // the test finishes writing to it, racing the write into an EPIPE
+      // (broken pipe) whose likelihood depends on builder CPU speed —
+      // exactly what flaked on the arm64 Launchpad builder.
       installGpgStub('''#!/usr/bin/env bash
 if [[ "\$*" == *"--list-secret-keys"* ]]; then exit 0; fi
+cat > /dev/null
 echo "gpg: agent_genkey failed: Inappropriate ioctl for device" >&2
 echo "gpg: key generation failed: Inappropriate ioctl for device" >&2
 exit 2

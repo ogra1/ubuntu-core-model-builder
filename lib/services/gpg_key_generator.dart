@@ -172,8 +172,16 @@ class GpgKeyGenerator {
     final errFut = process.stderr
         .transform(const Utf8Decoder(allowMalformed: true))
         .join();
-    process.stdin.add(utf8.encode(KeySpec.params(name)));
-    await process.stdin.close();
+    // gpg may exit before we finish feeding it the params blob (bad
+    // homedir, missing agent, ...). The write then fails with a broken
+    // pipe; swallow it so the exit-code/stderr path below produces the
+    // friendly KeyGenerationException instead of a raw SocketException.
+    try {
+      process.stdin.add(utf8.encode(KeySpec.params(name)));
+      await process.stdin.close();
+    } on SocketException {
+      // fall through: the process is already exiting.
+    }
 
     final int exitCode;
     try {

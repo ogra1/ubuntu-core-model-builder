@@ -31,6 +31,15 @@ const _mockStore = 'http://127.0.0.1:8474';
 const _password = 's3cret';
 const _code = '654321';
 
+/// 0 when a working `gpg` is on PATH, non-zero otherwise.
+Future<int> _gpgAvailable() async {
+  try {
+    return (await Process.run('gpg', ['--version'])).exitCode;
+  } on ProcessException {
+    return 127;
+  }
+}
+
 void main() {
   late Process mock;
   late SnapstoreAuthSession session;
@@ -62,12 +71,16 @@ void main() {
       '--gen-key',
     ]);
     gpg.stdout.drain<void>();
-    gpg.stderr.drain<void>();
+    final errFut =
+        gpg.stderr.transform(const Utf8Decoder(allowMalformed: true)).join();
     gpg.stdin.add(utf8.encode(params));
     await gpg.stdin.close();
     final rc = await gpg.exitCode.timeout(const Duration(seconds: 120));
     if (rc != 0) {
-      throw StateError('gpg --gen-key failed (rc=$rc) — is gpg available?');
+      // Surface gpg's own diagnostic — without it a builder-environment
+      // failure (gpg-agent, /run/user, stale keyring) is undiagnosable.
+      throw StateError('gpg --gen-key failed (rc=$rc) — '
+          'stderr: ${(await errFut).trim()}; is gpg available?');
     }
 
     // `gpg --list-secret-keys --with-colons --fixed-list-mode` emits, per
@@ -173,6 +186,10 @@ void main() {
     if (!SnapstoreAuthSession.isAvailable()) {
       print('SKIP: libsnapstore_auth not found '
           '(set SNAPSTORE_AUTH_LIB or run scripts/build_rust_backend.sh)');
+      return;
+    }
+    if (await _gpgAvailable() != 0) {
+      print('SKIP: gpg not available in this build environment');
       return;
     }
     mock = await Process.start('python3', [
